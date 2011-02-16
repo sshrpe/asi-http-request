@@ -28,6 +28,13 @@ NSString *ASIHTTPRequestVersion = @"v1.8-56 2011-02-06";
 
 NSString* const NetworkRequestErrorDomain = @"ASIHTTPRequestErrorDomain";
 
+NSString *const ASIHTTPRequestMethodGET = @"GET";
+NSString *const ASIHTTPRequestMethodPOST = @"POST";
+NSString *const ASIHTTPRequestMethodPUT = @"PUT";
+NSString *const ASIHTTPRequestMethodHEAD = @"HEAD";
+NSString *const ASIHTTPRequestMethodDELETE = @"DELETE";
+
+
 static NSString *ASIHTTPRequestRunLoopMode = @"ASIHTTPRequestRunLoopMode";
 
 static const CFOptionFlags kNetworkEvents =  kCFStreamEventHasBytesAvailable | kCFStreamEventEndEncountered | kCFStreamEventErrorOccurred;
@@ -280,7 +287,7 @@ static NSOperationQueue *sharedQueue = nil;
 - (id)initWithURL:(NSURL *)newURL
 {
 	self = [self init];
-	[self setRequestMethod:@"GET"];
+	[self setRequestMethod:ASIHTTPRequestMethodGET];
 
 	[self setRunLoopMode:NSDefaultRunLoopMode];
 	[self setShouldAttemptPersistentConnection:YES];
@@ -538,8 +545,8 @@ static NSOperationQueue *sharedQueue = nil;
 	}
 		
 	if ([self postLength] > 0) {
-		if ([requestMethod isEqualToString:@"GET"] || [requestMethod isEqualToString:@"DELETE"] || [requestMethod isEqualToString:@"HEAD"]) {
-			[self setRequestMethod:@"POST"];
+		if ([requestMethod isEqualToString:ASIHTTPRequestMethodGET] || [requestMethod isEqualToString:ASIHTTPRequestMethodDELETE] || [requestMethod isEqualToString:ASIHTTPRequestMethodHEAD]) {
+			[self setRequestMethod:ASIHTTPRequestMethodPOST];
 		}
 		[self addRequestHeader:@"Content-Length" value:[NSString stringWithFormat:@"%llu",[self postLength]]];
 	}
@@ -858,7 +865,7 @@ static NSOperationQueue *sharedQueue = nil;
 			[self buildPostBody];
 		}
 		
-		if (![[self requestMethod] isEqualToString:@"GET"]) {
+		if (![[self requestMethod] isEqualToString:ASIHTTPRequestMethodGET]) {
 			[self setDownloadCache:nil];
 		}
 		
@@ -1571,7 +1578,7 @@ static NSOperationQueue *sharedQueue = nil;
 	[headRequest setPersistentConnectionTimeoutSeconds:[self persistentConnectionTimeoutSeconds]];
 	
 	[headRequest setMainRequest:self];
-	[headRequest setRequestMethod:@"HEAD"];
+	[headRequest setRequestMethod:ASIHTTPRequestMethodHEAD];
 	return headRequest;
 }
 
@@ -2143,7 +2150,7 @@ static NSOperationQueue *sharedQueue = nil;
 			// http://allseeing-i.lighthouseapp.com/projects/27881/tickets/27-302-redirection-issue
 							
 			if ([self responseStatusCode] != 307 && (![self shouldUseRFC2616RedirectBehaviour] || [self responseStatusCode] == 303)) {
-				[self setRequestMethod:@"GET"];
+				[self setRequestMethod:ASIHTTPRequestMethodGET];
 				[self setPostBody:nil];
 				[self setPostLength:0];
 

@@ -42,7 +42,7 @@ NSString *const ASIS3StorageClassReducedRedundancy = @"REDUCED_REDUNDANCY";
 {
 	ASIS3ObjectRequest *newRequest = [self requestWithBucket:theBucket key:theKey];
 	[newRequest appendPostData:data];
-	[newRequest setRequestMethod:@"PUT"];
+	[newRequest setRequestMethod:ASIHTTPRequestMethodPUT];
 	return newRequest;
 }
 
@@ -51,7 +51,7 @@ NSString *const ASIS3StorageClassReducedRedundancy = @"REDUCED_REDUNDANCY";
 	ASIS3ObjectRequest *newRequest = [self requestWithBucket:theBucket key:theKey];
 	[newRequest setPostBodyFilePath:filePath];
 	[newRequest setShouldStreamPostDataFromDisk:YES];
-	[newRequest setRequestMethod:@"PUT"];
+	[newRequest setRequestMethod:ASIHTTPRequestMethodPUT];
 	[newRequest setMimeType:[ASIHTTPRequest mimeTypeForFileAtPath:filePath]];
 	return newRequest;
 }
@@ -59,14 +59,14 @@ NSString *const ASIS3StorageClassReducedRedundancy = @"REDUCED_REDUNDANCY";
 + (id)DELETERequestWithBucket:(NSString *)theBucket key:(NSString *)theKey
 {
 	ASIS3ObjectRequest *newRequest = [self requestWithBucket:theBucket key:theKey];
-	[newRequest setRequestMethod:@"DELETE"];
+	[newRequest setRequestMethod:ASIHTTPRequestMethodDELETE];
 	return newRequest;
 }
 
 + (id)COPYRequestFromBucket:(NSString *)theSourceBucket key:(NSString *)theSourceKey toBucket:(NSString *)theBucket key:(NSString *)theKey
 {
 	ASIS3ObjectRequest *newRequest = [self requestWithBucket:theBucket key:theKey];
-	[newRequest setRequestMethod:@"PUT"];
+	[newRequest setRequestMethod:ASIHTTPRequestMethodPUT];
 	[newRequest setSourceBucket:theSourceBucket];
 	[newRequest setSourceKey:theSourceKey];
 	return newRequest;
@@ -75,7 +75,7 @@ NSString *const ASIS3StorageClassReducedRedundancy = @"REDUCED_REDUNDANCY";
 + (id)HEADRequestWithBucket:(NSString *)theBucket key:(NSString *)theKey
 {
 	ASIS3ObjectRequest *newRequest = [self requestWithBucket:theBucket key:theKey];
-	[newRequest setRequestMethod:@"HEAD"];
+	[newRequest setRequestMethod:ASIHTTPRequestMethodHEAD];
 	return newRequest;
 }
 
@@ -145,7 +145,7 @@ NSString *const ASIS3StorageClassReducedRedundancy = @"REDUCED_REDUNDANCY";
 
 - (NSString *)stringToSignForHeaders:(NSString *)canonicalizedAmzHeaders resource:(NSString *)canonicalizedResource
 {
-	if ([[self requestMethod] isEqualToString:@"PUT"] && ![self sourceKey]) {
+	if ([[self requestMethod] isEqualToString:ASIHTTPRequestMethodPUT] && ![self sourceKey]) {
 		[self addRequestHeader:@"Content-Type" value:[self mimeType]];
 		return [NSString stringWithFormat:@"PUT\n\n%@\n%@\n%@%@",[self mimeType],dateString,canonicalizedAmzHeaders,canonicalizedResource];
 	} 

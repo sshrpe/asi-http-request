@@ -33,7 +33,7 @@
 #pragma mark HEAD - Container Info
 
 + (id)containerInfoRequest:(NSString *)containerName {
-	ASICloudFilesCDNRequest *request = [ASICloudFilesCDNRequest cdnRequestWithMethod:@"HEAD" containerName:containerName];
+	ASICloudFilesCDNRequest *request = [ASICloudFilesCDNRequest cdnRequestWithMethod:ASIHTTPRequestMethodHEAD containerName:containerName];
 	return request;
 }
 
@@ -53,7 +53,7 @@
 #pragma mark GET - CDN Container Lists
 
 + (id)listRequest {
-	ASICloudFilesCDNRequest *request = [ASICloudFilesCDNRequest cdnRequestWithMethod:@"GET" query:@"?format=xml"];
+	ASICloudFilesCDNRequest *request = [ASICloudFilesCDNRequest cdnRequestWithMethod:ASIHTTPRequestMethodPOST query:@"?format=xml"];
 	return request;
 }
 
@@ -72,7 +72,7 @@
 		query = [query stringByAppendingString:[NSString stringWithFormat:@"&limit=%i", limit]];
 	}
 	
-	ASICloudFilesCDNRequest *request = [ASICloudFilesCDNRequest cdnRequestWithMethod:@"GET" query:query];
+	ASICloudFilesCDNRequest *request = [ASICloudFilesCDNRequest cdnRequestWithMethod:ASIHTTPRequestMethodPOST query:query];
 	return request;
 }
 
@@ -102,12 +102,12 @@
 // PUT operations against a Container are used to CDN-enable that Container.
 // Include an HTTP header of X-TTL to specify a custom TTL.
 + (id)putRequestWithContainer:(NSString *)containerName {
-	ASICloudFilesCDNRequest *request = [ASICloudFilesCDNRequest cdnRequestWithMethod:@"PUT" containerName:containerName];
+	ASICloudFilesCDNRequest *request = [ASICloudFilesCDNRequest cdnRequestWithMethod:ASIHTTPRequestMethodPUT containerName:containerName];
 	return request;
 }
 
 + (id)putRequestWithContainer:(NSString *)containerName ttl:(NSUInteger)ttl {
-	ASICloudFilesCDNRequest *request = [ASICloudFilesCDNRequest cdnRequestWithMethod:@"PUT" containerName:containerName];	
+	ASICloudFilesCDNRequest *request = [ASICloudFilesCDNRequest cdnRequestWithMethod:ASIHTTPRequestMethodPUT containerName:containerName];	
 	[request addRequestHeader:@"X-Ttl" value:[NSString stringWithFormat:@"%i", ttl]];
 	return request;
 }
@@ -121,12 +121,12 @@
 // X-TTL: 86400
 // X-CDN-Enabled: True
 + (id)postRequestWithContainer:(NSString *)containerName {
-	ASICloudFilesCDNRequest *request = [ASICloudFilesCDNRequest cdnRequestWithMethod:@"POST" containerName:containerName];
+	ASICloudFilesCDNRequest *request = [ASICloudFilesCDNRequest cdnRequestWithMethod:ASIHTTPRequestMethodPOST containerName:containerName];
 	return request;
 }
 
 + (id)postRequestWithContainer:(NSString *)containerName cdnEnabled:(BOOL)cdnEnabled ttl:(NSUInteger)ttl {
-	ASICloudFilesCDNRequest *request = [ASICloudFilesCDNRequest cdnRequestWithMethod:@"POST" containerName:containerName];
+	ASICloudFilesCDNRequest *request = [ASICloudFilesCDNRequest cdnRequestWithMethod:ASIHTTPRequestMethodPOST containerName:containerName];
 	if (ttl > 0) {
 		[request addRequestHeader:@"X-Ttl" value:[NSString stringWithFormat:@"%i", ttl]];
 	}

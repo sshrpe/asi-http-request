@@ -42,7 +42,7 @@
 - (ASIS3ObjectRequest *)DELETERequest
 {
 	ASIS3ObjectRequest *request = [ASIS3ObjectRequest requestWithBucket:[self bucket] key:[self key]];
-	[request setRequestMethod:@"DELETE"];
+	[request setRequestMethod:ASIHTTPRequestMethodDELETE];
 	return request;
 }
 

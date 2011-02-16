@@ -47,7 +47,7 @@
 #pragma mark HEAD - Container Info
 
 + (id)containerInfoRequest:(NSString *)containerName {
-	ASICloudFilesObjectRequest *request = [ASICloudFilesObjectRequest storageRequestWithMethod:@"HEAD" containerName:containerName];
+	ASICloudFilesObjectRequest *request = [ASICloudFilesObjectRequest storageRequestWithMethod:ASIHTTPRequestMethodHEAD containerName:containerName];
 	return request;
 }
 
@@ -63,7 +63,7 @@
 #pragma mark HEAD - Object Info
 
 + (id)objectInfoRequest:(NSString *)containerName objectPath:(NSString *)objectPath {
-	ASICloudFilesObjectRequest *request = [ASICloudFilesObjectRequest storageRequestWithMethod:@"HEAD" containerName:containerName objectPath:objectPath];
+	ASICloudFilesObjectRequest *request = [ASICloudFilesObjectRequest storageRequestWithMethod:ASIHTTPRequestMethodHEAD containerName:containerName objectPath:objectPath];
 	return request;
 }
 
@@ -88,7 +88,7 @@
 
 + (id)listRequestWithContainer:(NSString *)containerName limit:(NSUInteger)limit marker:(NSString *)marker prefix:(NSString *)prefix path:(NSString *)path {
 	NSString *queryString = [ASICloudFilesObjectRequest queryStringWithContainer:containerName limit:limit marker:marker prefix:prefix path:path];
-	ASICloudFilesObjectRequest *request = [ASICloudFilesObjectRequest storageRequestWithMethod:@"GET" containerName:containerName queryString:queryString];
+	ASICloudFilesObjectRequest *request = [ASICloudFilesObjectRequest storageRequestWithMethod:ASIHTTPRequestMethodPOST containerName:containerName queryString:queryString];
 	return request;
 }
 
@@ -115,7 +115,7 @@
 #pragma mark GET - Retrieve Object
 
 + (id)getObjectRequestWithContainer:(NSString *)containerName objectPath:(NSString *)objectPath {
-	return [ASICloudFilesObjectRequest storageRequestWithMethod:@"GET" containerName:containerName objectPath:objectPath];
+	return [ASICloudFilesObjectRequest storageRequestWithMethod:ASIHTTPRequestMethodPOST containerName:containerName objectPath:objectPath];
 }
 
 - (ASICloudFilesObject *)object {
@@ -153,7 +153,7 @@
 
 + (id)putObjectRequestWithContainer:(NSString *)containerName objectPath:(NSString *)objectPath contentType:(NSString *)contentType objectData:(NSData *)objectData metadata:(NSDictionary *)metadata etag:(NSString *)etag {
 	
-	ASICloudFilesObjectRequest *request = [ASICloudFilesObjectRequest storageRequestWithMethod:@"PUT" containerName:containerName objectPath:objectPath];
+	ASICloudFilesObjectRequest *request = [ASICloudFilesObjectRequest storageRequestWithMethod:ASIHTTPRequestMethodPUT containerName:containerName objectPath:objectPath];
 	[request addRequestHeader:@"Content-Type" value:contentType];
 
 	// add metadata to headers
@@ -169,7 +169,7 @@
 
 + (id)putObjectRequestWithContainer:(NSString *)containerName objectPath:(NSString *)objectPath contentType:(NSString *)contentType file:(NSString *)filePath metadata:(NSDictionary *)metadata etag:(NSString *)etag
 {
-	ASICloudFilesObjectRequest *request = [ASICloudFilesObjectRequest storageRequestWithMethod:@"PUT" containerName:containerName objectPath:objectPath];
+	ASICloudFilesObjectRequest *request = [ASICloudFilesObjectRequest storageRequestWithMethod:ASIHTTPRequestMethodPUT containerName:containerName objectPath:objectPath];
 	[request addRequestHeader:@"Content-Type" value:contentType];
 	
 	// add metadata to headers
@@ -192,7 +192,7 @@
 }
 
 + (id)postObjectRequestWithContainer:(NSString *)containerName objectPath:(NSString *)objectPath metadata:(NSDictionary *)metadata {
-	ASICloudFilesObjectRequest *request = [ASICloudFilesObjectRequest storageRequestWithMethod:@"POST" containerName:containerName objectPath:objectPath];
+	ASICloudFilesObjectRequest *request = [ASICloudFilesObjectRequest storageRequestWithMethod:ASIHTTPRequestMethodPOST containerName:containerName objectPath:objectPath];
 	
 	// add metadata to headers
 	if (metadata) {
@@ -208,7 +208,7 @@
 #pragma mark DELETE - Delete Object
 
 + (id)deleteObjectRequestWithContainer:(NSString *)containerName objectPath:(NSString *)objectPath {
-	ASICloudFilesObjectRequest *request = [ASICloudFilesObjectRequest storageRequestWithMethod:@"DELETE" containerName:containerName objectPath:objectPath];
+	ASICloudFilesObjectRequest *request = [ASICloudFilesObjectRequest storageRequestWithMethod:ASIHTTPRequestMethodDELETE containerName:containerName objectPath:objectPath];
 	return request;
 }
 

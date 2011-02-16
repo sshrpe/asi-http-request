@@ -78,7 +78,7 @@ static NSString *bucket = @"";
 	key = @"photos/puppy.jpg";
 	dateString = @"Tue, 27 Mar 2007 21:15:45 +0000";
 	request = [ASIS3ObjectRequest requestWithBucket:exampleBucket key:key];
-	[request setRequestMethod:@"PUT"];
+	[request setRequestMethod:ASIHTTPRequestMethodPUT];
 	[request setMimeType:@"image/jpeg"];
 	[request setDateString:dateString];
 	[request setSecretAccessKey:exampleSecretAccessKey];
@@ -294,7 +294,7 @@ static NSString *bucket = @"";
 	// DELETE the file
 	request = [ASIS3ObjectRequest requestWithBucket:bucket key:key];
 	[request setSecretAccessKey:secretAccessKey];
-	[request setRequestMethod:@"DELETE"];
+	[request setRequestMethod:ASIHTTPRequestMethodDELETE];
 	[request setAccessKey:accessKey];
 	[request startSynchronous];
 	success = [[request responseString] isEqualToString:@""];
@@ -303,7 +303,7 @@ static NSString *bucket = @"";
 	// (Also DELETE the copy we made)
 	request = [ASIS3ObjectRequest requestWithBucket:bucket key:@"test-copy"];
 	[request setSecretAccessKey:secretAccessKey];
-	[request setRequestMethod:@"DELETE"];
+	[request setRequestMethod:ASIHTTPRequestMethodDELETE];
 	[request setAccessKey:accessKey];
 	[request startSynchronous];
 	success = [[request responseString] isEqualToString:@""];
@@ -340,7 +340,7 @@ static NSString *bucket = @"";
 	// clean up (Delete it)
 	request = [ASIS3ObjectRequest requestWithBucket:bucket key:key];
 	[request setSecretAccessKey:secretAccessKey];
-	[request setRequestMethod:@"DELETE"];
+	[request setRequestMethod:ASIHTTPRequestMethodDELETE];
 	[request setAccessKey:accessKey];
 	[request startSynchronous];
 	success = [[request responseString] isEqualToString:@""];

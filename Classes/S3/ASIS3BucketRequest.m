@@ -46,7 +46,7 @@
 + (id)PUTRequestWithBucket:(NSString *)theBucket
 {
 	ASIS3BucketRequest *request = [self requestWithBucket:theBucket];
-	[request setRequestMethod:@"PUT"];
+	[request setRequestMethod:ASIHTTPRequestMethodPUT];
 	return request;
 }
 
@@ -54,7 +54,7 @@
 + (id)DELETERequestWithBucket:(NSString *)theBucket
 {
 	ASIS3BucketRequest *request = [self requestWithBucket:theBucket];
-	[request setRequestMethod:@"DELETE"];
+	[request setRequestMethod:ASIHTTPRequestMethodDELETE];
 	return request;
 }
 

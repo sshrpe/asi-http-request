@@ -181,7 +181,7 @@
 	// Ensure charset isn't added to file post (GH issue 36)
 	request = [ASIFormDataRequest requestWithURL:[NSURL URLWithString:@"http://allseeing-i.com/ASIHTTPRequest/Tests/return-raw-request"]];
 	[request setData:[@"test 123" dataUsingEncoding:NSUTF8StringEncoding] forKey:@"file"];
-	[request setRequestMethod:@"PUT"];
+	[request setRequestMethod:ASIHTTPRequestMethodPUT];
 	[request startSynchronous];	
 	success = ([[request responseString] rangeOfString:@"charset=utf-8"].location == NSNotFound);
 	GHAssertTrue(success,@"Sent a charset header for an uploaded file");
@@ -192,7 +192,7 @@
 - (void)testPUT
 {
 	ASIFormDataRequest *request = [ASIFormDataRequest requestWithURL:[NSURL URLWithString:@"http://allseeing-i.com/ASIHTTPRequest/Tests/put_form_data"]];
-	[request setRequestMethod:@"PUT"];
+	[request setRequestMethod:ASIHTTPRequestMethodPUT];
 	[request setPostValue:@"cheep cheep" forKey:@"hello"];
 	[request startSynchronous];
 	
@@ -202,7 +202,7 @@
 	
 	// Ensure that other methods still default to POST
 	request = [ASIFormDataRequest requestWithURL:[NSURL URLWithString:@"http://allseeing-i.com/ASIHTTPRequest/Tests/put_form_data"]];
-	[request setRequestMethod:@"DELETE"];
+	[request setRequestMethod:ASIHTTPRequestMethodDELETE];
 	[request setPostValue:@"cheep cheep" forKey:@"hello"];
 	[request startSynchronous];
 	

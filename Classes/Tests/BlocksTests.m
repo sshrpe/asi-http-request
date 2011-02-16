@@ -73,7 +73,7 @@
         [dataReceived appendData:data];
     }];
 	
-	[request setRequestMethod:@"PUT"];
+	[request setRequestMethod:ASIHTTPRequestMethodPUT];
 	[request appendPostData:dataToSend];
 	[request startSynchronous];
 	

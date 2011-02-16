@@ -45,7 +45,7 @@
 // HEAD /<api version>/<account>
 // HEAD operations against an account are performed to retrieve the number of Containers and the total bytes stored in Cloud Files for the account. This information is returned in two custom headers, X-Account-Container-Count and X-Account-Bytes-Used.
 + (id)accountInfoRequest {
-	ASICloudFilesContainerRequest *request = [ASICloudFilesContainerRequest storageRequestWithMethod:@"HEAD"];
+	ASICloudFilesContainerRequest *request = [ASICloudFilesContainerRequest storageRequestWithMethod:ASIHTTPRequestMethodHEAD];
 	return request;
 }
 
@@ -71,14 +71,14 @@
 		queryString = [queryString stringByAppendingString:[NSString stringWithFormat:@"&marker=%@", marker]];
 	}
 	
-	ASICloudFilesContainerRequest *request = [ASICloudFilesContainerRequest storageRequestWithMethod:@"GET" queryString:queryString];
+	ASICloudFilesContainerRequest *request = [ASICloudFilesContainerRequest storageRequestWithMethod:ASIHTTPRequestMethodPOST queryString:queryString];
 	return request;
 }
 
 // GET /<api version>/<account>/<container>
 // Create a request to list all containers
 + (id)listRequest {
-	ASICloudFilesContainerRequest *request = [ASICloudFilesContainerRequest storageRequestWithMethod:@"GET" 
+	ASICloudFilesContainerRequest *request = [ASICloudFilesContainerRequest storageRequestWithMethod:ASIHTTPRequestMethodPOST 
 																			queryString:@"?format=xml"];
 	return request;
 }
@@ -107,7 +107,7 @@
 
 // PUT /<api version>/<account>/<container>
 + (id)createContainerRequest:(NSString *)containerName {
-	ASICloudFilesContainerRequest *request = [ASICloudFilesContainerRequest storageRequestWithMethod:@"PUT" containerName:containerName queryString:@""];
+	ASICloudFilesContainerRequest *request = [ASICloudFilesContainerRequest storageRequestWithMethod:ASIHTTPRequestMethodPUT containerName:containerName queryString:@""];
 	return request;
 }
 
@@ -116,7 +116,7 @@
 
 // DELETE /<api version>/<account>/<container>
 + (id)deleteContainerRequest:(NSString *)containerName {
-	ASICloudFilesContainerRequest *request = [ASICloudFilesContainerRequest storageRequestWithMethod:@"DELETE" containerName:containerName queryString:@""];
+	ASICloudFilesContainerRequest *request = [ASICloudFilesContainerRequest storageRequestWithMethod:ASIHTTPRequestMethodDELETE containerName:containerName queryString:@""];
 	return request;
 }
 

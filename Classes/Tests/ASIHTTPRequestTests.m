@@ -334,7 +334,7 @@
 - (void)testRequestMethod
 {
 	NSURL *url = [[[NSURL alloc] initWithString:@"http://allseeing-i.com/ASIHTTPRequest/tests/request-method"] autorelease];
-	NSArray *methods = [[[NSArray alloc] initWithObjects:@"GET",@"POST",@"PUT",@"DELETE", nil] autorelease];
+	NSArray *methods = [[[NSArray alloc] initWithObjects:ASIHTTPRequestMethodPOST,ASIHTTPRequestMethodPOST,ASIHTTPRequestMethodPUT,ASIHTTPRequestMethodDELETE, nil] autorelease];
 	for (NSString *method in methods) {
 		ASIHTTPRequest *request = [[[ASIHTTPRequest alloc] initWithURL:url] autorelease];
 		[request setRequestMethod:method];
@@ -415,9 +415,9 @@
 		[request2 setPostValue:@"Giant Monkey" forKey:@"lookbehindyou"];
 		[request2 startSynchronous];
 		
-		NSString *method = @"GET";
+		NSString *method = ASIHTTPRequestMethodGET;
 		if (i>304) {
-			method = @"POST";	
+			method = ASIHTTPRequestMethodPOST;	
 		}
 		NSString *expectedString = [NSString stringWithFormat:@"Redirected as %@ after a %hi status code",method,i];
 		if (i>304) {
@@ -445,14 +445,14 @@
 		GHAssertTrue(success,@"Got the wrong status code (expected 200)");	
 
 		if (i == 303) {
-			success = ([request2 postLength] == 0 && ![request2 postBody] && [[request2 requestMethod] isEqualToString:@"GET"]);
+			success = ([request2 postLength] == 0 && ![request2 postBody] && [[request2 requestMethod] isEqualToString:ASIHTTPRequestMethodGET]);
 			GHAssertTrue(success,@"Failed to reset request to GET on 303 redirect");
 			
 			success = [[request2 responseString] isEqualToString:[NSString stringWithFormat:@"Redirected as GET after a %hi status code",i]];
 			GHAssertTrue(success,@"Failed to dump the post body on 303 redirect");
 			
 		} else {
-			success = ([request2 postLength] > 0 || ![request2 postBody] || ![[request2 requestMethod] isEqualToString:@"POST"]);
+			success = ([request2 postLength] > 0 || ![request2 postBody] || ![[request2 requestMethod] isEqualToString:ASIHTTPRequestMethodPOST]);
 			GHAssertTrue(success,@"Failed to use the same request method and body for a redirect when using rfc2616 behaviour");
 		
 			success = ([[request2 responseString] isEqualToString:[NSString stringWithFormat:@"Redirected as POST after a %hi status code\r\nWatch out for the Giant Monkey!",i]]);
@@ -829,7 +829,7 @@
 	// Test using a user-specified file as the request body (useful for PUT)
 	progress = 0;
 	ASIHTTPRequest *request = [[[ASIHTTPRequest alloc] initWithURL:url] autorelease];
-	[request setRequestMethod:@"PUT"];
+	[request setRequestMethod:ASIHTTPRequestMethodPUT];
 	[request setShouldStreamPostDataFromDisk:YES];
 	[request setUploadProgressDelegate:self];
 	[request setPostBodyFilePath:requestContentPath];
@@ -846,7 +846,7 @@
 	progress = 0;
 	request = [[[ASIHTTPRequest alloc] initWithURL:url] autorelease];
 	[request setShouldStreamPostDataFromDisk:YES];
-	[request setRequestMethod:@"PUT"];
+	[request setRequestMethod:ASIHTTPRequestMethodPUT];
 	[request setUploadProgressDelegate:self];
 	[request appendPostDataFromFile:requestContentPath];
 	[request startSynchronous];
@@ -1397,12 +1397,12 @@
 - (void)test303Redirect
 {
 	ASIHTTPRequest *request = [ASIHTTPRequest requestWithURL:[NSURL URLWithString:@"http://allseeing-i.com/ASIHTTPRequest/tests/redirect_303"]];
-	[request setRequestMethod:@"PUT"];
+	[request setRequestMethod:ASIHTTPRequestMethodPUT];
 	[request appendPostData:[@"Fuzzy" dataUsingEncoding:NSUTF8StringEncoding]];
 	[request startSynchronous];
 	BOOL success = [[[request url] absoluteString] isEqualToString:@"http://allseeing-i.com/ASIHTTPRequest/tests/request-method"];
 	GHAssertTrue(success,@"Failed to redirect to correct location");
-	success = [[request responseString] isEqualToString:@"GET"];
+	success = [[request responseString] isEqualToString:ASIHTTPRequestMethodGET];
 	GHAssertTrue(success,@"Failed to use GET on new URL");
 }
 
@@ -1416,7 +1416,7 @@
 
 	
 	ASIHTTPRequest *request = [ASIHTTPRequest requestWithURL:[NSURL URLWithString:@"http://allseeing-i.com/ASIHTTPRequest/tests/compressed_post_body"]];
-	[request setRequestMethod:@"PUT"];
+	[request setRequestMethod:ASIHTTPRequestMethodPUT];
 	[request setShouldCompressRequestBody:YES];
 	[request setShouldStreamPostDataFromDisk:YES];
 	[request setUploadProgressDelegate:self];
@@ -1693,7 +1693,7 @@
 	ASIHTTPRequest *request = [ASIHTTPRequest requestWithURL:[NSURL URLWithString:@"http://allseeing-i.com"]];
 	NSData *data = [[[NSMutableData alloc] initWithLength:64*1024] autorelease];
 	[request appendPostData:data];
-	[request setRequestMethod:@"POST"];
+	[request setRequestMethod:ASIHTTPRequestMethodPOST];
 	[request setUploadProgressDelegate:self];
 	[request startSynchronous];
 	

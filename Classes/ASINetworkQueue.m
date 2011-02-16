@@ -117,7 +117,7 @@
 	if ([operation isKindOfClass:[ASIHTTPRequest class]]) {
 		
 		ASIHTTPRequest *request = (ASIHTTPRequest *)operation;
-		[request setRequestMethod:@"HEAD"];
+		[request setRequestMethod:ASIHTTPRequestMethodHEAD];
 		[request setQueuePriority:10];
 		[request setShowAccurateProgress:YES];
 		[request setQueue:self];
@@ -147,7 +147,7 @@
 		// We'll only do this before the queue is started
 		// If requests are added after the queue is started they will probably move the overall progress backwards anyway, so there's no value performing the HEAD requests first
 		// Instead, they'll update the total progress if and when they receive a content-length header
-		if ([[request requestMethod] isEqualToString:@"GET"]) {
+		if ([[request requestMethod] isEqualToString:ASIHTTPRequestMethodGET]) {
 			if ([self isSuspended]) {
 				ASIHTTPRequest *HEADRequest = [request HEADRequest];
 				[self addHEADOperation:HEADRequest];
