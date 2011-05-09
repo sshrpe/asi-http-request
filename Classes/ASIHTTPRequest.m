@@ -2,7 +2,7 @@
 //  ASIHTTPRequest.m
 //
 //  Created by Ben Copsey on 04/10/2007.
-//  Copyright 2007-2010 All-Seeing Interactive. All rights reserved.
+//  Copyright 2007-2011 All-Seeing Interactive. All rights reserved.
 //
 //  A guide to the main features is available at:
 //  http://allseeing-i.com/ASIHTTPRequest
@@ -24,7 +24,7 @@
 #import "ASIDataCompressor.h"
 
 // Automatically set on build
-NSString *ASIHTTPRequestVersion = @"v1.8-56 2011-02-06";
+NSString *ASIHTTPRequestVersion = @"v1.8-77 2011-05-08";
 
 static NSString *defaultUserAgent = nil;
 
@@ -232,6 +232,7 @@ static NSOperationQueue *sharedQueue = nil;
 @property (retain) NSString *responseStatusMessage;
 @property (assign) BOOL inProgress;
 @property (assign) int retryCount;
+@property (assign) BOOL willRetryRequest;
 @property (assign) BOOL connectionCanBeReused;
 @property (retain, nonatomic) NSMutableDictionary *connectionInfo;
 @property (retain, nonatomic) NSInputStream *readStream;
@@ -605,6 +606,27 @@ static NSOperationQueue *sharedQueue = nil;
 	[stream close];
 }
 
+- (NSString *)requestMethod
+{
+	[[self cancelledLock] lock];
+	NSString *m = requestMethod;
+	[[self cancelledLock] unlock];
+	return m;
+}
+
+- (void)setRequestMethod:(NSString *)newRequestMethod
+{
+	[[self cancelledLock] lock];
+	if (requestMethod != newRequestMethod) {
+		[requestMethod release];
+		requestMethod = [newRequestMethod retain];
+		if ([requestMethod isEqualToString:@"POST"] || [requestMethod isEqualToString:@"PUT"] || [postBody length] || postBodyFilePath) {
+			[self setShouldAttemptPersistentConnection:NO];
+		}
+	}
+	[[self cancelledLock] unlock];
+}
+
 - (NSURL *)url
 {
 	[[self cancelledLock] lock];
@@ -946,41 +968,45 @@ static NSOperationQueue *sharedQueue = nil;
 	if (![self shouldPresentCredentialsBeforeChallenge]) {
 		return;
 	}
-		
-	// First, see if we have any credentials we can use in the session store
+
 	NSDictionary *credentials = nil;
-	if ([self useSessionPersistence]) {
-		credentials = [self findSessionAuthenticationCredentials];
-	}
-	
-	
-	// Are any credentials set on this request that might be used for basic authentication?
-	if ([self username] && [self password] && ![self domain]) {
-		
-		// If we know this request should use Basic auth, we'll add an Authorization header with basic credentials
-		if ([[self authenticationScheme] isEqualToString:(NSString *)kCFHTTPAuthenticationSchemeBasic]) {
+
+	// Do we already have an auth header?
+	if (![[self requestHeaders] objectForKey:@"Authorization"]) {
+
+		// If we have basic authentication explicitly set and a username and password set on the request, add a basic auth header
+		if ([self username] && [self password] && [[self authenticationScheme] isEqualToString:(NSString *)kCFHTTPAuthenticationSchemeBasic]) {
 			[self addBasicAuthenticationHeaderWithUsername:[self username] andPassword:[self password]];
-		}
-	}
-	
-	if (credentials && ![[self requestHeaders] objectForKey:@"Authorization"]) {
-		
-		// When the Authentication key is set, the credentials were stored after an authentication challenge, so we can let CFNetwork apply them
-		// (credentials for Digest and NTLM will always be stored like this)
-		if ([credentials objectForKey:@"Authentication"]) {
-			
-			// If we've already talked to this server and have valid credentials, let's apply them to the request
-			if (!CFHTTPMessageApplyCredentialDictionary(request, (CFHTTPAuthenticationRef)[credentials objectForKey:@"Authentication"], (CFDictionaryRef)[credentials objectForKey:@"Credentials"], NULL)) {
-				[[self class] removeAuthenticationCredentialsFromSessionStore:[credentials objectForKey:@"Credentials"]];
-			}
-			
-			// If the Authentication key is not set, these credentials were stored after a username and password set on a previous request passed basic authentication
-			// When this happens, we'll need to create the Authorization header ourselves
+
 		} else {
-			NSDictionary *usernameAndPassword = [credentials objectForKey:@"Credentials"];
-			[self addBasicAuthenticationHeaderWithUsername:[usernameAndPassword objectForKey:(NSString *)kCFHTTPAuthenticationUsername] andPassword:[usernameAndPassword objectForKey:(NSString *)kCFHTTPAuthenticationPassword]];
+
+			// See if we have any cached credentials we can use in the session store
+			if ([self useSessionPersistence]) {
+				credentials = [self findSessionAuthenticationCredentials];
+
+				if (credentials) {
+
+					// When the Authentication key is set, the credentials were stored after an authentication challenge, so we can let CFNetwork apply them
+					// (credentials for Digest and NTLM will always be stored like this)
+					if ([credentials objectForKey:@"Authentication"]) {
+
+						// If we've already talked to this server and have valid credentials, let's apply them to the request
+						if (!CFHTTPMessageApplyCredentialDictionary(request, (CFHTTPAuthenticationRef)[credentials objectForKey:@"Authentication"], (CFDictionaryRef)[credentials objectForKey:@"Credentials"], NULL)) {
+							[[self class] removeAuthenticationCredentialsFromSessionStore:[credentials objectForKey:@"Credentials"]];
+						}
+
+					// If the Authentication key is not set, these credentials were stored after a username and password set on a previous request passed basic authentication
+					// When this happens, we'll need to create the Authorization header ourselves
+					} else {
+						NSDictionary *usernameAndPassword = [credentials objectForKey:@"Credentials"];
+						[self addBasicAuthenticationHeaderWithUsername:[usernameAndPassword objectForKey:(NSString *)kCFHTTPAuthenticationUsername] andPassword:[usernameAndPassword objectForKey:(NSString *)kCFHTTPAuthenticationPassword]];
+					}
+				}
+			}
 		}
 	}
+
+	// Apply proxy authentication credentials
 	if ([self useSessionPersistence]) {
 		credentials = [self findSessionProxyAuthenticationCredentials];
 		if (credentials) {
@@ -1303,6 +1329,10 @@ static NSOperationQueue *sharedQueue = nil;
 		
 		CFReadStreamSetProperty((CFReadStreamRef)[self readStream], CFSTR("ASIStreamID"), [[self connectionInfo] objectForKey:@"id"]);
 	
+	} else {
+		#if DEBUG_PERSISTENT_CONNECTIONS
+		NSLog(@"Request %@ will not use a persistent connection",self);
+		#endif
 	}
 	
 	[connectionsLock unlock];
@@ -1531,7 +1561,7 @@ static NSOperationQueue *sharedQueue = nil;
 	}
 	
 	// Clean up any temporary file used to store request body for streaming
-	if (![self authenticationNeeded] && [self didCreateTemporaryPostDataFile]) {
+	if (![self authenticationNeeded] && ![self willRetryRequest] && [self didCreateTemporaryPostDataFile]) {
 		[self removeTemporaryUploadFile];
 		[self removeTemporaryCompressedUploadFile];
 		[self setDidCreateTemporaryPostDataFile:NO];
@@ -2375,17 +2405,24 @@ static NSOperationQueue *sharedQueue = nil;
 	NSString *user = nil;
 	NSString *pass = nil;
 	
-
+	ASIHTTPRequest *theRequest = [self mainRequest];
 	// If this is a HEAD request generated by an ASINetworkQueue, we'll try to use the details from the main request
-	if ([self mainRequest] && [[self mainRequest] proxyUsername] && [[self mainRequest] proxyPassword]) {
-		user = [[self mainRequest] proxyUsername];
-		pass = [[self mainRequest] proxyPassword];
+	if ([theRequest proxyUsername] && [theRequest proxyPassword]) {
+		user = [theRequest proxyUsername];
+		pass = [theRequest proxyPassword];
 		
-		// Let's try to use the ones set in this object
+	// Let's try to use the ones set in this object
 	} else if ([self proxyUsername] && [self proxyPassword]) {
 		user = [self proxyUsername];
 		pass = [self proxyPassword];
-	}		
+	}
+
+	// When we connect to a website using NTLM via a proxy, we will use the main credentials
+	if ((!user || !pass) && [self proxyAuthenticationScheme] == (NSString *)kCFHTTPAuthenticationSchemeNTLM) {
+		user = [self username];
+		pass = [self password];
+	}
+
 
 	
 	// Ok, that didn't work, let's try the keychain
@@ -2404,13 +2441,21 @@ static NSOperationQueue *sharedQueue = nil;
 
 		NSString *ntlmDomain = [self proxyDomain];
 
-		// If we have no domain yet, let's try to extract it from the username
+		// If we have no domain yet
 		if (!ntlmDomain || [ntlmDomain length] == 0) {
-			ntlmDomain = @"";
+
+			// Let's try to extract it from the username
 			NSArray* ntlmComponents = [user componentsSeparatedByString:@"\\"];
 			if ([ntlmComponents count] == 2) {
 				ntlmDomain = [ntlmComponents objectAtIndex:0];
 				user = [ntlmComponents objectAtIndex:1];
+
+			// If we are connecting to a website using NTLM, but we are connecting via a proxy, the string we need may be in the domain property
+			} else {
+				ntlmDomain = [self domain];
+			}
+			if (!ntlmDomain) {
+				ntlmDomain = @"";
 			}
 		}
 		[newCredentials setObject:ntlmDomain forKey:(NSString *)kCFHTTPAuthenticationAccountDomain];
@@ -2796,6 +2841,7 @@ static NSOperationQueue *sharedQueue = nil;
 		return;
 	}
 	
+	// Do we actually need to authenticate with a proxy?
 	if ([self authenticationNeeded] == ASIProxyAuthenticationNeeded) {
 		[self attemptToApplyProxyCredentialsAndResume];
 		return;
@@ -3264,7 +3310,9 @@ static NSOperationQueue *sharedQueue = nil;
 		[self unscheduleReadStream];
 	}
 	#if DEBUG_PERSISTENT_CONNECTIONS
-	NSLog(@"Request #%@ finished using connection #%@",[self requestID], [[self connectionInfo] objectForKey:@"id"]);
+	if ([self requestID]) {
+		NSLog(@"Request #%@ finished using connection #%@",[self requestID], [[self connectionInfo] objectForKey:@"id"]);
+	}
 	#endif
 	[[self connectionInfo] removeObjectForKey:@"request"];
 	[[self connectionInfo] setObject:[NSDate dateWithTimeIntervalSinceNow:[self persistentConnectionTimeoutSeconds]] forKey:@"expires"];
@@ -3389,6 +3437,11 @@ static NSOperationQueue *sharedQueue = nil;
 - (BOOL)retryUsingNewConnection
 {
 	if ([self retryCount] == 0) {
+
+		[self setWillRetryRequest:YES];
+		[self cancelLoad];
+		[self setWillRetryRequest:NO];
+
 		#if DEBUG_PERSISTENT_CONNECTIONS
 			NSLog(@"Request attempted to use connection #%@, but it has been closed - will retry with a new connection", [[self connectionInfo] objectForKey:@"id"]);
 		#endif
@@ -3412,8 +3465,6 @@ static NSOperationQueue *sharedQueue = nil;
 {
 	NSError *underlyingError = NSMakeCollectable([(NSError *)CFReadStreamCopyError((CFReadStreamRef)[self readStream]) autorelease]);
 
-	[self cancelLoad];
-	
 	if (![self error]) { // We may already have handled this error
 		
 		// First, check for a 'socket not connected', 'broken pipe' or 'connection lost' error
@@ -3438,8 +3489,10 @@ static NSOperationQueue *sharedQueue = nil;
 				reason = [NSString stringWithFormat:@"%@: SSL problem (Possible causes may include a bad/expired/self-signed certificate, clock set to wrong date)",reason];
 			}
 		}
-		
+		[self cancelLoad];
 		[self failWithError:[NSError errorWithDomain:NetworkRequestErrorDomain code:ASIConnectionFailureErrorType userInfo:[NSDictionary dictionaryWithObjectsAndKeys:reason,NSLocalizedDescriptionKey,underlyingError,NSUnderlyingErrorKey,nil]]];
+	} else {
+		[self cancelLoad];
 	}
 	[self checkRequestStatus];
 }
@@ -3847,6 +3900,7 @@ static NSOperationQueue *sharedQueue = nil;
 	[newRequest setDefaultResponseEncoding:[self defaultResponseEncoding]];
 	[newRequest setAllowResumeForFileDownloads:[self allowResumeForFileDownloads]];
 	[newRequest setUserInfo:[[[self userInfo] copyWithZone:zone] autorelease]];
+	[newRequest setTag:[self tag]];
 	[newRequest setUseHTTPVersionOne:[self useHTTPVersionOne]];
 	[newRequest setShouldRedirect:[self shouldRedirect]];
 	[newRequest setValidatesSecureCertificate:[self validatesSecureCertificate]];
@@ -3978,31 +4032,59 @@ static NSOperationQueue *sharedQueue = nil;
 {
 	[sessionCredentialsLock lock];
 	NSMutableArray *sessionCredentialsList = [[self class] sessionCredentialsStore];
-	// Find an exact match (same url)
-	for (NSDictionary *theCredentials in sessionCredentialsList) {
-		if ([(NSURL*)[theCredentials objectForKey:@"URL"] isEqual:[self url]]) {
-			// /Just a sanity check to ensure we never choose credentials from a different realm. Can't really do more than that, as either this request or the stored credentials may not have a realm when the other does
-			if (![self responseStatusCode] || (![theCredentials objectForKey:@"AuthenticationRealm"] || [[theCredentials objectForKey:@"AuthenticationRealm"] isEqualToString:[self authenticationRealm]])) {
-				[sessionCredentialsLock unlock];
-				return theCredentials;
-			}
-		}
-	}
-	// Find a rough match (same host, port, scheme)
 	NSURL *requestURL = [self url];
+
+	BOOL haveFoundExactMatch;
+	NSDictionary *closeMatch = nil;
+
+	// Loop through all the cached credentials we have, looking for the best match for this request
 	for (NSDictionary *theCredentials in sessionCredentialsList) {
-		NSURL *theURL = [theCredentials objectForKey:@"URL"];
 		
-		// Port can be nil!
-		if ([[theURL host] isEqualToString:[requestURL host]] && ([theURL port] == [requestURL port] || ([requestURL port] && [[theURL port] isEqualToNumber:[requestURL port]])) && [[theURL scheme] isEqualToString:[requestURL scheme]]) {
-			if (![self responseStatusCode] || (![theCredentials objectForKey:@"AuthenticationRealm"] || [[theCredentials objectForKey:@"AuthenticationRealm"] isEqualToString:[self authenticationRealm]])) {
-				[sessionCredentialsLock unlock];
-				return theCredentials;
+		haveFoundExactMatch = NO;
+		NSURL *cachedCredentialsURL = [theCredentials objectForKey:@"URL"];
+
+		// Find an exact match (same url)
+		if ([cachedCredentialsURL isEqual:[self url]]) {
+			haveFoundExactMatch = YES;
+
+		// This is not an exact match for the url, and we already have a close match we can use
+		} else if (closeMatch) {
+			continue;
+
+		// Find a close match (same host, scheme and port)
+		} else if ([[cachedCredentialsURL host] isEqualToString:[requestURL host]] && ([cachedCredentialsURL port] == [requestURL port] || ([requestURL port] && [[cachedCredentialsURL port] isEqualToNumber:[requestURL port]])) && [[cachedCredentialsURL scheme] isEqualToString:[requestURL scheme]]) {
+		} else {
+			continue;
+		}
+
+		// Just a sanity check to ensure we never choose credentials from a different realm. Can't really do more than that, as either this request or the stored credentials may not have a realm when the other does
+		if ([self authenticationRealm] && ([theCredentials objectForKey:@"AuthenticationRealm"] && ![[theCredentials objectForKey:@"AuthenticationRealm"] isEqualToString:[self authenticationRealm]])) {
+			continue;
+		}
+
+		// If we have a username and password set on the request, check that they are the same as the cached ones
+		if ([self username] && [self password]) {
+			NSDictionary *usernameAndPassword = [theCredentials objectForKey:@"Credentials"];
+			NSString *storedUsername = [usernameAndPassword objectForKey:(NSString *)kCFHTTPAuthenticationUsername];
+			NSString *storedPassword = [usernameAndPassword objectForKey:(NSString *)kCFHTTPAuthenticationUsername];
+			if (![storedUsername isEqualToString:[self username]] || ![storedPassword isEqualToString:[self password]]) {
+				continue;
 			}
 		}
+
+		// If we have an exact match for the url, use those credentials
+		if (haveFoundExactMatch) {
+			[sessionCredentialsLock unlock];
+			return theCredentials;
+		}
+
+		// We have no exact match, let's remember that we have a good match for this server, and we'll use it at the end if we don't find an exact match
+		closeMatch = theCredentials;
 	}
 	[sessionCredentialsLock unlock];
-	return nil;
+
+	// Return credentials that matched on host, port and scheme, or nil if we didn't find any
+	return closeMatch;
 }
 
 #pragma mark keychain storage
@@ -4115,10 +4197,15 @@ static NSOperationQueue *sharedQueue = nil;
 	if (!appName) {
 		appName = [bundle objectForInfoDictionaryKey:@"CFBundleName"];	
 	}
+
+	NSData *latin1Data = [appName dataUsingEncoding:NSUTF8StringEncoding];
+	appName = [[NSString alloc] initWithData:latin1Data encoding:NSISOLatin1StringEncoding];
+
 	// If we couldn't find one, we'll give up (and ASIHTTPRequest will use the standard CFNetwork user agent)
 	if (!appName) {
 		return nil;
 	}
+
 	NSString *appVersion = nil;
 	NSString *marketingVersionNumber = [bundle objectForInfoDictionaryKey:@"CFBundleShortVersionString"];
     NSString *developmentVersionNumber = [bundle objectForInfoDictionaryKey:@"CFBundleVersion"];
@@ -4735,6 +4822,7 @@ static NSOperationQueue *sharedQueue = nil;
 @synthesize allowCompressedResponse;
 @synthesize allowResumeForFileDownloads;
 @synthesize userInfo;
+@synthesize tag;
 @synthesize postBodyFilePath;
 @synthesize compressedPostBodyFilePath;
 @synthesize postBodyWriteStream;
@@ -4772,6 +4860,7 @@ static NSOperationQueue *sharedQueue = nil;
 @synthesize inProgress;
 @synthesize numberOfTimesToRetryOnTimeout;
 @synthesize retryCount;
+@synthesize willRetryRequest;
 @synthesize shouldAttemptPersistentConnection;
 @synthesize persistentConnectionTimeoutSeconds;
 @synthesize connectionCanBeReused;
