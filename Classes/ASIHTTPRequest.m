@@ -24,7 +24,7 @@
 #import "ASIDataCompressor.h"
 
 // Automatically set on build
-NSString *ASIHTTPRequestVersion = @"v1.8-81 2011-05-11";
+NSString *ASIHTTPRequestVersion = @"v1.8.1-8 2011-06-05";
 
 static NSString *defaultUserAgent = nil;
 
@@ -170,6 +170,8 @@ static NSOperationQueue *sharedQueue = nil;
 - (void)markAsFinished;
 - (void)performRedirect;
 - (BOOL)shouldTimeOut;
+- (BOOL)willRedirect;
+- (BOOL)willAskDelegateToConfirmRedirect;
 
 + (void)performInvocation:(NSInvocation *)invocation onTarget:(id *)target releasingObject:(id)objectToRelease;
 + (void)hideNetworkActivityIndicatorAfterDelay;
@@ -701,7 +703,7 @@ static NSOperationQueue *sharedQueue = nil;
 - (void)cancelOnRequestThread
 {
 	#if DEBUG_REQUEST_STATUS
-	NSLog(@"Request cancelled: %@",self);
+	NSLog(@"[STATUS] Request cancelled: %@",self);
 	#endif
     
 	[[self cancelledLock] lock];
@@ -791,7 +793,7 @@ static NSOperationQueue *sharedQueue = nil;
 - (void)startSynchronous
 {
 #if DEBUG_REQUEST_STATUS || DEBUG_THROTTLING
-	NSLog(@"Starting synchronous request %@",self);
+	NSLog(@"[STATUS] Starting synchronous request %@",self);
 #endif
 	[self setSynchronous:YES];
 	[self setRunLoopMode:ASIHTTPRequestRunLoopMode];
@@ -816,7 +818,7 @@ static NSOperationQueue *sharedQueue = nil;
 - (void)startAsynchronous
 {
 #if DEBUG_REQUEST_STATUS || DEBUG_THROTTLING
-	NSLog(@"Starting asynchronous request %@",self);
+	NSLog(@"[STATUS] Starting asynchronous request %@",self);
 #endif
 	[sharedQueue addOperation:self];
 }
@@ -966,6 +968,9 @@ static NSOperationQueue *sharedQueue = nil;
 {
 	// Do we want to send credentials before we are asked for them?
 	if (![self shouldPresentCredentialsBeforeChallenge]) {
+		#if DEBUG_HTTP_AUTHENTICATION
+		NSLog(@"[AUTH] Request %@ will not send credentials to the server until it asks for them",self);
+		#endif
 		return;
 	}
 
@@ -977,6 +982,10 @@ static NSOperationQueue *sharedQueue = nil;
 		// If we have basic authentication explicitly set and a username and password set on the request, add a basic auth header
 		if ([self username] && [self password] && [[self authenticationScheme] isEqualToString:(NSString *)kCFHTTPAuthenticationSchemeBasic]) {
 			[self addBasicAuthenticationHeaderWithUsername:[self username] andPassword:[self password]];
+
+			#if DEBUG_HTTP_AUTHENTICATION
+			NSLog(@"[AUTH] Request %@ has a username and password set, and was manually configured to use BASIC. Will send credentials without waiting for an authentication challenge",self);	
+			#endif
 
 		} else {
 
@@ -991,8 +1000,16 @@ static NSOperationQueue *sharedQueue = nil;
 					if ([credentials objectForKey:@"Authentication"]) {
 
 						// If we've already talked to this server and have valid credentials, let's apply them to the request
-						if (!CFHTTPMessageApplyCredentialDictionary(request, (CFHTTPAuthenticationRef)[credentials objectForKey:@"Authentication"], (CFDictionaryRef)[credentials objectForKey:@"Credentials"], NULL)) {
+						if (CFHTTPMessageApplyCredentialDictionary(request, (CFHTTPAuthenticationRef)[credentials objectForKey:@"Authentication"], (CFDictionaryRef)[credentials objectForKey:@"Credentials"], NULL)) {
+							[self setAuthenticationScheme:[credentials objectForKey:@"AuthenticationScheme"]];
+							#if DEBUG_HTTP_AUTHENTICATION
+							NSLog(@"[AUTH] Request %@ found cached credentials (%@), will reuse without waiting for an authentication challenge",self,[credentials objectForKey:@"AuthenticationScheme"]);
+							#endif
+						} else {
 							[[self class] removeAuthenticationCredentialsFromSessionStore:[credentials objectForKey:@"Credentials"]];
+							#if DEBUG_HTTP_AUTHENTICATION
+							NSLog(@"[AUTH] Failed to apply cached credentials to request %@. These will be removed from the session store, and this request will wait for an authentication challenge",self);
+							#endif
 						}
 
 					// If the Authentication key is not set, these credentials were stored after a username and password set on a previous request passed basic authentication
@@ -1000,6 +1017,9 @@ static NSOperationQueue *sharedQueue = nil;
 					} else {
 						NSDictionary *usernameAndPassword = [credentials objectForKey:@"Credentials"];
 						[self addBasicAuthenticationHeaderWithUsername:[usernameAndPassword objectForKey:(NSString *)kCFHTTPAuthenticationUsername] andPassword:[usernameAndPassword objectForKey:(NSString *)kCFHTTPAuthenticationPassword]];
+						#if DEBUG_HTTP_AUTHENTICATION
+						NSLog(@"[AUTH] Request %@ found cached BASIC credentials from a previous request. Will send credentials without waiting for an authentication challenge",self);
+						#endif
 					}
 				}
 			}
@@ -1271,15 +1291,22 @@ static NSOperationQueue *sharedQueue = nil;
 			
 			if (![[[self connectionInfo] objectForKey:@"host"] isEqualToString:[[self url] host]] || ![[[self connectionInfo] objectForKey:@"scheme"] isEqualToString:[[self url] scheme]] || [(NSNumber *)[[self connectionInfo] objectForKey:@"port"] intValue] != [[[self url] port] intValue]) {
 				[self setConnectionInfo:nil];
-				
+
 			// Check if we should have expired this connection
 			} else if ([[[self connectionInfo] objectForKey:@"expires"] timeIntervalSinceNow] < 0) {
 				#if DEBUG_PERSISTENT_CONNECTIONS
-				NSLog(@"Not re-using connection #%i because it has expired",[[[self connectionInfo] objectForKey:@"id"] intValue]);
+				NSLog(@"[CONNECTION] Not re-using connection #%i because it has expired",[[[self connectionInfo] objectForKey:@"id"] intValue]);
 				#endif
 				[persistentConnectionsPool removeObject:[self connectionInfo]];
 				[self setConnectionInfo:nil];
-			}
+
+			} else if ([[self connectionInfo] objectForKey:@"request"] != nil) {
+                //Some other request reused this connection already - we'll have to create a new one
+				#if DEBUG_PERSISTENT_CONNECTIONS
+                NSLog(@"%@ - Not re-using connection #%i for request #%i because it is already used by request #%i",self,[[[self connectionInfo] objectForKey:@"id"] intValue],[[self requestID] intValue],[[[self connectionInfo] objectForKey:@"request"] intValue]);
+				#endif
+                [self setConnectionInfo:nil];
+            }
 		}
 		
 		
@@ -1320,7 +1347,7 @@ static NSOperationQueue *sharedQueue = nil;
 		CFReadStreamSetProperty((CFReadStreamRef)[self readStream],  kCFStreamPropertyHTTPAttemptPersistentConnection, kCFBooleanTrue);
 		
 		#if DEBUG_PERSISTENT_CONNECTIONS
-		NSLog(@"Request #%@ will use connection #%i",[self requestID],[[[self connectionInfo] objectForKey:@"id"] intValue]);
+		NSLog(@"[CONNECTION] Request #%@ will use connection #%i",[self requestID],[[[self connectionInfo] objectForKey:@"id"] intValue]);
 		#endif
 		
 		
@@ -1331,7 +1358,7 @@ static NSOperationQueue *sharedQueue = nil;
 	
 	} else {
 		#if DEBUG_PERSISTENT_CONNECTIONS
-		NSLog(@"Request %@ will not use a persistent connection",self);
+		NSLog(@"[CONNECTION] Request %@ will not use a persistent connection",self);
 		#endif
 	}
 	
@@ -1508,7 +1535,7 @@ static NSOperationQueue *sharedQueue = nil;
 						
 				#if DEBUG_REQUEST_STATUS
 				if ([self totalBytesSent] == [self postLength]) {
-					NSLog(@"Request %@ finished uploading data",self);
+					NSLog(@"[STATUS] Request %@ finished uploading data",self);
 				}
 				#endif
 			}
@@ -1543,8 +1570,9 @@ static NSOperationQueue *sharedQueue = nil;
 	[self setPostBodyReadStream:nil];
 	
     if ([self rawResponseData]) {
-		[self setRawResponseData:nil];
-	
+		if (![self complete]) {
+			[self setRawResponseData:nil];
+		}
 	// If we were downloading to a file
 	} else if ([self temporaryFileDownloadPath]) {
 		[[self fileDownloadOutputStream] close];
@@ -1554,10 +1582,12 @@ static NSOperationQueue *sharedQueue = nil;
 		[self setInflatedFileDownloadOutputStream:nil];
 		
 		// If we haven't said we might want to resume, let's remove the temporary file too
-		if (![self allowResumeForFileDownloads]) {
-			[self removeTemporaryDownloadFile];
+		if (![self complete]) {
+			if (![self allowResumeForFileDownloads]) {
+				[self removeTemporaryDownloadFile];
+			}
+			[self removeTemporaryUncompressedDownloadFile];
 		}
-		[self removeTemporaryUncompressedDownloadFile];
 	}
 	
 	// Clean up any temporary file used to store request body for streaming
@@ -1566,8 +1596,6 @@ static NSOperationQueue *sharedQueue = nil;
 		[self removeTemporaryCompressedUploadFile];
 		[self setDidCreateTemporaryPostDataFile:NO];
 	}
-	
-	[self setResponseHeaders:nil];
 }
 
 #pragma mark HEAD request
@@ -1964,7 +1992,7 @@ static NSOperationQueue *sharedQueue = nil;
 - (void)requestFinished
 {
 #if DEBUG_REQUEST_STATUS || DEBUG_THROTTLING
-	NSLog(@"Request finished: %@",self);
+	NSLog(@"[STATUS] Request finished: %@",self);
 #endif
 	if ([self error] || [self mainRequest]) {
 		return;
@@ -2031,7 +2059,7 @@ static NSOperationQueue *sharedQueue = nil;
 - (void)failWithError:(NSError *)theError
 {
 #if DEBUG_REQUEST_STATUS || DEBUG_THROTTLING
-	NSLog(@"Request %@: %@",self,(theError == ASIRequestCancelledError ? @"Cancelled" : @"Failed"));
+	NSLog(@"[STATUS] Request %@: %@",self,(theError == ASIRequestCancelledError ? @"Cancelled" : @"Failed"));
 #endif
 	[self setComplete:YES];
 	
@@ -2039,7 +2067,7 @@ static NSOperationQueue *sharedQueue = nil;
 	if (theError && [theError code] != ASIAuthenticationErrorType && [theError code] != ASITooMuchRedirectionErrorType) {
 		[connectionsLock lock];
 		#if DEBUG_PERSISTENT_CONNECTIONS
-		NSLog(@"Request #%@ failed and will invalidate connection #%@",[self requestID],[[self connectionInfo] objectForKey:@"id"]);
+		NSLog(@"[CONNECTION] Request #%@ failed and will invalidate connection #%@",[self requestID],[[self connectionInfo] objectForKey:@"id"]);
 		#endif
 		[[self connectionInfo] removeObjectForKey:@"request"];
 		[persistentConnectionsPool removeObject:[self connectionInfo]];
@@ -2107,23 +2135,22 @@ static NSOperationQueue *sharedQueue = nil;
 
 	#if DEBUG_REQUEST_STATUS
 	if ([self totalBytesSent] == [self postLength]) {
-		NSLog(@"Request %@ received response headers",self);
+		NSLog(@"[STATUS] Request %@ received response headers",self);
 	}
 	#endif		
 
-	CFDictionaryRef headerFields = CFHTTPMessageCopyAllHeaderFields(message);
-	[self setResponseHeaders:(NSDictionary *)headerFields];
-
-	CFRelease(headerFields);
-	
+	[self setResponseHeaders:[(NSDictionary *)CFHTTPMessageCopyAllHeaderFields(message) autorelease]];
 	[self setResponseStatusCode:(int)CFHTTPMessageGetResponseStatusCode(message)];
 	[self setResponseStatusMessage:[(NSString *)CFHTTPMessageCopyResponseStatusLine(message) autorelease]];
-	
+
 	if ([self downloadCache] && ([[self downloadCache] canUseCachedDataForRequest:self])) {
+
+		// Update the expiry date
+		[[self downloadCache] updateExpiryForRequest:self maxAge:[self secondsToCache]];
+
 		// Read the response from the cache
 		[self useDataFromCache];
-		// Update the response headers (this will usually move the expiry date into the future)
-		[[self downloadCache] storeResponseForRequest:self maxAge:[self secondsToCache]];
+
 		CFRelease(message);
 		return;
 	}
@@ -2133,6 +2160,12 @@ static NSOperationQueue *sharedQueue = nil;
 		[self setAuthenticationNeeded:ASIHTTPAuthenticationNeeded];
 	} else if ([self responseStatusCode] == 407) {
 		[self setAuthenticationNeeded:ASIProxyAuthenticationNeeded];
+	} else {
+		#if DEBUG_HTTP_AUTHENTICATION
+		if ([self authenticationScheme]) {
+			NSLog(@"[AUTH] Request %@ has passed %@ authentication",self,[self authenticationScheme]);
+		}
+		#endif
 	}
 		
 	// Authentication succeeded, or no authentication was required
@@ -2140,6 +2173,10 @@ static NSOperationQueue *sharedQueue = nil;
 
 		// Did we get here without an authentication challenge? (which can happen when shouldPresentCredentialsBeforeChallenge is YES and basic auth was successful)
 		if (!requestAuthentication && [[self authenticationScheme] isEqualToString:(NSString *)kCFHTTPAuthenticationSchemeBasic] && [self username] && [self password] && [self useSessionPersistence]) {
+
+			#if DEBUG_HTTP_AUTHENTICATION
+			NSLog(@"[AUTH] Request %@ passed BASIC authentication, and will save credentials in the session store for future use",self);
+			#endif
 			
 			NSMutableDictionary *newCredentials = [NSMutableDictionary dictionaryWithCapacity:2];
 			[newCredentials setObject:[self username] forKey:(NSString *)kCFHTTPAuthenticationUsername];
@@ -2174,57 +2211,7 @@ static NSOperationQueue *sharedQueue = nil;
 	}
 	
 	// Do we need to redirect?
-	// Note that ASIHTTPRequest does not currently support 305 Use Proxy
-	if ([self shouldRedirect] && [responseHeaders valueForKey:@"Location"]) {
-		if (([self responseStatusCode] > 300 && [self responseStatusCode] < 304) || [self responseStatusCode] == 307) {
-            
-			[self performSelectorOnMainThread:@selector(requestRedirected) withObject:nil waitUntilDone:[NSThread isMainThread]];
-			
-			// By default, we redirect 301 and 302 response codes as GET requests
-			// According to RFC 2616 this is wrong, but this is what most browsers do, so it's probably what you're expecting to happen
-			// See also:
-			// http://allseeing-i.lighthouseapp.com/projects/27881/tickets/27-302-redirection-issue
-							
-			if ([self responseStatusCode] != 307 && (![self shouldUseRFC2616RedirectBehaviour] || [self responseStatusCode] == 303)) {
-				[self setRequestMethod:ASIHTTPRequestMethodGET];
-				[self setPostBody:nil];
-				[self setPostLength:0];
-
-				// Perhaps there are other headers we should be preserving, but it's hard to know what we need to keep and what to throw away.
-				NSString *userAgentHeader = [[self requestHeaders] objectForKey:@"User-Agent"];
-				NSString *acceptHeader = [[self requestHeaders] objectForKey:@"Accept"];
-				[self setRequestHeaders:nil];
-				if (userAgentHeader) {
-					[self addRequestHeader:@"User-Agent" value:userAgentHeader];
-				}
-				if (acceptHeader) {
-					[self addRequestHeader:@"Accept" value:acceptHeader];
-				}
-				[self setHaveBuiltRequestHeaders:NO];
-			} else {
-			
-				// Force rebuild the cookie header incase we got some new cookies from this request
-				// All other request headers will remain as they are for 301 / 302 redirects
-				[self applyCookieHeader];
-			}
-
-			// Force the redirected request to rebuild the request headers (if not a 303, it will re-use old ones, and add any new ones)
-			[self setRedirectURL:[[NSURL URLWithString:[responseHeaders valueForKey:@"Location"] relativeToURL:[self url]] absoluteURL]];
-			[self setNeedsRedirect:YES];
-			
-			// Clear the request cookies
-			// This means manually added cookies will not be added to the redirect request - only those stored in the global persistent store
-			// But, this is probably the safest option - we might be redirecting to a different domain
-			[self setRequestCookies:[NSMutableArray array]];
-			
-			#if DEBUG_REQUEST_STATUS
-				NSLog(@"Request will redirect (code: %i): %@",[self responseStatusCode],self);
-			#endif
-			
-		}
-	}
-
-	if (![self needsRedirect]) {
+	if (![self willRedirect]) {
 		// See if we got a Content-length header
 		NSString *cLength = [responseHeaders valueForKey:@"Content-Length"];
 		ASIHTTPRequest *theRequest = self;
@@ -2257,6 +2244,7 @@ static NSOperationQueue *sharedQueue = nil;
 	if ([self shouldAttemptPersistentConnection]) {
 		
 		NSString *connectionHeader = [[[self responseHeaders] objectForKey:@"Connection"] lowercaseString];
+
 		NSString *httpVersion = NSMakeCollectable([(NSString *)CFHTTPMessageCopyVersion(message) autorelease]);
 		
 		// Don't re-use the connection if the server is HTTP 1.0 and didn't send Connection: Keep-Alive
@@ -2281,7 +2269,7 @@ static NSOperationQueue *sharedQueue = nil;
 						[self setConnectionCanBeReused:YES];
 						[self setPersistentConnectionTimeoutSeconds:timeout];
 						#if DEBUG_PERSISTENT_CONNECTIONS
-							NSLog(@"Got a keep-alive header, will keep this connection open for %f seconds", [self persistentConnectionTimeoutSeconds]);
+							NSLog(@"[CONNECTION] Got a keep-alive header, will keep this connection open for %f seconds", [self persistentConnectionTimeoutSeconds]);
 						#endif					
 					}
 				
@@ -2289,7 +2277,7 @@ static NSOperationQueue *sharedQueue = nil;
 				} else {
 					[self setConnectionCanBeReused:YES];
 					#if DEBUG_PERSISTENT_CONNECTIONS
-						NSLog(@"Got no keep-alive header, will keep this connection open for %f seconds", [self persistentConnectionTimeoutSeconds]);
+						NSLog(@"[CONNECTION] Got no keep-alive header, will keep this connection open for %f seconds", [self persistentConnectionTimeoutSeconds]);
 					#endif
 				}
 			}
@@ -2298,6 +2286,65 @@ static NSOperationQueue *sharedQueue = nil;
 
 	CFRelease(message);
 	[self performSelectorOnMainThread:@selector(requestReceivedResponseHeaders:) withObject:[[[self responseHeaders] copy] autorelease] waitUntilDone:[NSThread isMainThread]];
+}
+
+- (BOOL)willRedirect
+{
+	// Do we need to redirect?
+	if (![self shouldRedirect] || ![responseHeaders valueForKey:@"Location"]) {
+		return NO;
+	}
+
+	// Note that ASIHTTPRequest does not currently support 305 Use Proxy
+	int responseCode = [self responseStatusCode];
+	if (responseCode != 301 && responseCode != 302 && responseCode != 303 && responseCode != 307) {
+		return NO;
+	}
+
+	[self performSelectorOnMainThread:@selector(requestRedirected) withObject:nil waitUntilDone:[NSThread isMainThread]];
+
+	// By default, we redirect 301 and 302 response codes as GET requests
+	// According to RFC 2616 this is wrong, but this is what most browsers do, so it's probably what you're expecting to happen
+	// See also:
+	// http://allseeing-i.lighthouseapp.com/projects/27881/tickets/27-302-redirection-issue
+
+	if (responseCode != 307 && (![self shouldUseRFC2616RedirectBehaviour] || responseCode == 303)) {
+		[self setRequestMethod:@"GET"];
+		[self setPostBody:nil];
+		[self setPostLength:0];
+
+		// Perhaps there are other headers we should be preserving, but it's hard to know what we need to keep and what to throw away.
+		NSString *userAgentHeader = [[self requestHeaders] objectForKey:@"User-Agent"];
+		NSString *acceptHeader = [[self requestHeaders] objectForKey:@"Accept"];
+		[self setRequestHeaders:nil];
+		if (userAgentHeader) {
+			[self addRequestHeader:@"User-Agent" value:userAgentHeader];
+		}
+		if (acceptHeader) {
+			[self addRequestHeader:@"Accept" value:acceptHeader];
+		}
+		[self setHaveBuiltRequestHeaders:NO];
+
+	} else {
+		// Force rebuild the cookie header incase we got some new cookies from this request
+		// All other request headers will remain as they are for 301 / 302 redirects
+		[self applyCookieHeader];
+	}
+
+	// Force the redirected request to rebuild the request headers (if not a 303, it will re-use old ones, and add any new ones)
+	[self setRedirectURL:[[NSURL URLWithString:[responseHeaders valueForKey:@"Location"] relativeToURL:[self url]] absoluteURL]];
+	[self setNeedsRedirect:YES];
+
+	// Clear the request cookies
+	// This means manually added cookies will not be added to the redirect request - only those stored in the global persistent store
+	// But, this is probably the safest option - we might be redirecting to a different domain
+	[self setRequestCookies:[NSMutableArray array]];
+
+	#if DEBUG_REQUEST_STATUS
+	NSLog(@"[STATUS] Request will redirect (code: %i): %@",responseCode,self);
+	#endif
+
+	return YES;
 }
 
 - (void)parseStringEncodingFromHeaders
@@ -2475,26 +2522,37 @@ static NSOperationQueue *sharedQueue = nil;
 - (NSMutableDictionary *)findCredentials
 {
 	NSMutableDictionary *newCredentials = [[[NSMutableDictionary alloc] init] autorelease];
-	
-	
+
 	// First, let's look at the url to see if the username and password were included
 	NSString *user = [[self url] user];
 	NSString *pass = [[self url] password];
-	
-	// If the username and password weren't in the url
-	if (!user || !pass) {
+
+	if (user && pass) {
+
+		#if DEBUG_HTTP_AUTHENTICATION
+		NSLog(@"[AUTH] Request %@ will use credentials set on its url",self);
+		#endif
+
+	} else {
 		
 		// If this is a HEAD request generated by an ASINetworkQueue, we'll try to use the details from the main request
 		if ([self mainRequest] && [[self mainRequest] username] && [[self mainRequest] password]) {
 			user = [[self mainRequest] username];
 			pass = [[self mainRequest] password];
-			
+
+			#if DEBUG_HTTP_AUTHENTICATION
+			NSLog(@"[AUTH] Request %@ will use credentials from its parent request",self);
+			#endif
+
 		// Let's try to use the ones set in this object
 		} else if ([self username] && [self password]) {
 			user = [self username];
 			pass = [self password];
+
+			#if DEBUG_HTTP_AUTHENTICATION
+			NSLog(@"[AUTH] Request %@ will use username and password properties as credentials",self);
+			#endif
 		}		
-		
 	}
 	
 	// Ok, that didn't work, let's try the keychain
@@ -2503,8 +2561,12 @@ static NSOperationQueue *sharedQueue = nil;
 		if (authenticationCredentials) {
 			user = [authenticationCredentials user];
 			pass = [authenticationCredentials password];
+			#if DEBUG_HTTP_AUTHENTICATION
+			if (user && pass) {
+				NSLog(@"[AUTH] Request %@ will use credentials from the keychain",self);
+			}
+			#endif
 		}
-		
 	}
 
 	// Handle NTLM, which requires a domain to be set too
@@ -2536,6 +2598,9 @@ static NSOperationQueue *sharedQueue = nil;
 // Called by delegate or authentication dialog to resume loading once authentication info has been populated
 - (void)retryUsingSuppliedCredentials
 {
+	#if DEBUG_HTTP_AUTHENTICATION
+		NSLog(@"[AUTH] Request %@ received credentials from its delegate or an ASIAuthenticationDialog, will retry",self);
+	#endif
 	//If the url was changed by the delegate, our CFHTTPMessageRef will be NULL and we'll go back to the start
 	if (!request) {
 		[self performSelector:@selector(main) onThread:[[self class] threadForRequest:self] withObject:nil waitUntilDone:NO];
@@ -2547,6 +2612,9 @@ static NSOperationQueue *sharedQueue = nil;
 // Called by delegate or authentication dialog to cancel authentication
 - (void)cancelAuthentication
 {
+	#if DEBUG_HTTP_AUTHENTICATION
+		NSLog(@"[AUTH] Request %@ had authentication cancelled by its delegate or an ASIAuthenticationDialog",self);
+	#endif
 	[self performSelector:@selector(failAuthentication) onThread:[[self class] threadForRequest:self] withObject:nil waitUntilDone:NO];
 }
 
@@ -2557,21 +2625,29 @@ static NSOperationQueue *sharedQueue = nil;
 
 - (BOOL)showProxyAuthenticationDialog
 {
-// Mac authentication dialog coming soon!
-#if TARGET_OS_IPHONE
+	if ([self isSynchronous]) {
+		return NO;
+	}
+
+	// Mac authentication dialog coming soon!
+	#if TARGET_OS_IPHONE
 	if ([self shouldPresentProxyAuthenticationDialog]) {
 		[ASIAuthenticationDialog performSelectorOnMainThread:@selector(presentAuthenticationDialogForRequest:) withObject:self waitUntilDone:[NSThread isMainThread]];
 		return YES;
 	}
 	return NO;
-#else
+	#else
 	return NO;
-#endif
+	#endif
 }
 
 
 - (BOOL)willAskDelegateForProxyCredentials
 {
+	if ([self isSynchronous]) {
+		return NO;
+	}
+
 	// If we have a delegate, we'll see if it can handle proxyAuthenticationNeededForRequest:.
 	// Otherwise, we'll try the queue (if this request is part of one) and it will pass the message on to its own delegate
 	id authenticationDelegate = [self delegate];
@@ -2619,6 +2695,10 @@ static NSOperationQueue *sharedQueue = nil;
 
 - (BOOL)willAskDelegateForCredentials
 {
+	if ([self isSynchronous]) {
+		return NO;
+	}
+
 	// If we have a delegate, we'll see if it can handle proxyAuthenticationNeededForRequest:.
 	// Otherwise, we'll try the queue (if this request is part of one) and it will pass the message on to its own delegate
 	id authenticationDelegate = [self delegate];
@@ -2821,19 +2901,20 @@ static NSOperationQueue *sharedQueue = nil;
 
 - (BOOL)showAuthenticationDialog
 {
-// Mac authentication dialog coming soon!
-#if TARGET_OS_IPHONE
+	if ([self isSynchronous]) {
+		return NO;
+	}
+	// Mac authentication dialog coming soon!
+	#if TARGET_OS_IPHONE
 	if ([self shouldPresentAuthenticationDialog]) {
 		[ASIAuthenticationDialog performSelectorOnMainThread:@selector(presentAuthenticationDialogForRequest:) withObject:self waitUntilDone:[NSThread isMainThread]];
 		return YES;
 	}
 	return NO;
-#else
+	#else
 	return NO;
-#endif
+	#endif
 }
-
-
 
 - (void)attemptToApplyCredentialsAndResume
 {
@@ -2856,6 +2937,10 @@ static NSOperationQueue *sharedQueue = nil;
 	}
 	
 	if (!requestAuthentication) {
+		#if DEBUG_HTTP_AUTHENTICATION
+		NSLog(@"[AUTH] Request %@ failed to read authentication information from response headers",self);
+		#endif
+
 		[self cancelLoad];
 		[self failWithError:[NSError errorWithDomain:NetworkRequestErrorDomain code:ASIInternalErrorWhileApplyingCredentialsType userInfo:[NSDictionary dictionaryWithObjectsAndKeys:@"Failed to get authentication object from response headers",NSLocalizedDescriptionKey,nil]]];
 		return;
@@ -2867,6 +2952,20 @@ static NSOperationQueue *sharedQueue = nil;
 		[self setAuthenticationRealm:[(NSString *)CFHTTPAuthenticationCopyRealm(requestAuthentication) autorelease]];
 	}
 	
+	#if DEBUG_HTTP_AUTHENTICATION
+		NSString *realm = [self authenticationRealm];
+		if (realm) {
+			realm = [NSString stringWithFormat:@" (Realm: %@)",realm];
+		} else {
+			realm = @"";
+		}
+		if ([self authenticationScheme] != (NSString *)kCFHTTPAuthenticationSchemeNTLM || [self authenticationRetryCount] == 0) {
+			NSLog(@"[AUTH] Request %@ received 401 challenge and must authenticate using %@%@",self,[self authenticationScheme],realm);
+		} else {
+			NSLog(@"[AUTH] Request %@ NTLM handshake step %i",self,[self authenticationRetryCount]+1);
+		}
+	#endif
+
 	// See if authentication is valid
 	CFStreamError err;		
 	if (!CFHTTPAuthenticationIsValid(requestAuthentication, &err)) {
@@ -2876,7 +2975,11 @@ static NSOperationQueue *sharedQueue = nil;
 		
 		// check for bad credentials, so we can give the delegate a chance to replace them
 		if (err.domain == kCFStreamErrorDomainHTTP && (err.error == kCFStreamErrorHTTPAuthenticationBadUserName || err.error == kCFStreamErrorHTTPAuthenticationBadPassword)) {
-			
+
+			#if DEBUG_HTTP_AUTHENTICATION
+			NSLog(@"[AUTH] Request %@ had bad credentials, will remove them from the session store if they are cached",self);
+			#endif
+
 			// Prevent more than one request from asking for credentials at once
 			[delegateAuthenticationLock lock];
 			
@@ -2886,34 +2989,57 @@ static NSOperationQueue *sharedQueue = nil;
 			
 			// If the user cancelled authentication via a dialog presented by another request, our queue may have cancelled us
 			if ([self error] || [self isCancelled]) {
+
+				#if DEBUG_HTTP_AUTHENTICATION
+				NSLog(@"[AUTH] Request %@ failed or was cancelled while waiting to access credentials",self);
+				#endif
+
 				[delegateAuthenticationLock unlock];
 				return;
 			}
-			
+
 			// Now we've acquired the lock, it may be that the session contains credentials we can re-use for this request
 			if ([self useSessionPersistence]) {
 				NSDictionary *credentials = [self findSessionAuthenticationCredentials];
 				if (credentials && [self applyCredentials:[credentials objectForKey:@"Credentials"]]) {
+
+					#if DEBUG_HTTP_AUTHENTICATION
+					NSLog(@"[AUTH] Request %@ will reuse cached credentials from the session (%@)",self,[credentials objectForKey:@"AuthenticationScheme"]);
+					#endif
+
 					[delegateAuthenticationLock unlock];
 					[self startRequest];
 					return;
 				}
 			}
 			
-			
-			
 			[self setLastActivityTime:nil];
 			
 			if ([self willAskDelegateForCredentials]) {
+
+				#if DEBUG_HTTP_AUTHENTICATION
+				NSLog(@"[AUTH] Request %@ will ask its delegate for credentials to use",self);
+				#endif
+
 				[delegateAuthenticationLock unlock];
 				return;
 			}
 			if ([self showAuthenticationDialog]) {
+
+				#if DEBUG_HTTP_AUTHENTICATION
+				NSLog(@"[AUTH] Request %@ will ask ASIAuthenticationDialog for credentials",self);
+				#endif
+
 				[delegateAuthenticationLock unlock];
 				return;
 			}
 			[delegateAuthenticationLock unlock];
 		}
+
+		#if DEBUG_HTTP_AUTHENTICATION
+		NSLog(@"[AUTH] Request %@ has no credentials to present and must give up",self);
+		#endif
+
 		[self cancelLoad];
 		[self failWithError:ASIAuthenticationError];
 		return;
@@ -2928,9 +3054,18 @@ static NSOperationQueue *sharedQueue = nil;
 			
 			// We've failed NTLM authentication twice, we should assume our credentials are wrong
 		} else if ([self authenticationScheme] == (NSString *)kCFHTTPAuthenticationSchemeNTLM && [self authenticationRetryCount ] == 2) {
+			#if DEBUG_HTTP_AUTHENTICATION
+			NSLog(@"[AUTH] Request %@ has failed NTLM authentication",self);
+			#endif
+
 			[self failWithError:ASIAuthenticationError];
 			
 		} else {
+
+			#if DEBUG_HTTP_AUTHENTICATION
+			NSLog(@"[AUTH] Request %@ had credentials and they were not marked as bad, but we got a 401 all the same.",self);
+			#endif
+
 			[self failWithError:[NSError errorWithDomain:NetworkRequestErrorDomain code:ASIInternalErrorWhileApplyingCredentialsType userInfo:[NSDictionary dictionaryWithObjectsAndKeys:@"Failed to apply credentials to request",NSLocalizedDescriptionKey,nil]]];
 		}
 		
@@ -2942,6 +3077,11 @@ static NSOperationQueue *sharedQueue = nil;
 		
 		// If the user cancelled authentication via a dialog presented by another request, our queue may have cancelled us
 		if ([self error] || [self isCancelled]) {
+
+			#if DEBUG_HTTP_AUTHENTICATION
+			NSLog(@"[AUTH] Request %@ failed or was cancelled while waiting to access credentials",self);
+			#endif
+
 			[delegateAuthenticationLock unlock];
 			return;
 		}
@@ -2950,6 +3090,11 @@ static NSOperationQueue *sharedQueue = nil;
 		if ([self useSessionPersistence]) {
 			NSDictionary *credentials = [self findSessionAuthenticationCredentials];
 			if (credentials && [self applyCredentials:[credentials objectForKey:@"Credentials"]]) {
+
+				#if DEBUG_HTTP_AUTHENTICATION
+				NSLog(@"[AUTH] Request %@ will reuse cached credentials from the session (%@)",self,[credentials objectForKey:@"AuthenticationScheme"]);
+				#endif
+
 				[delegateAuthenticationLock unlock];
 				[self startRequest];
 				return;
@@ -2966,24 +3111,38 @@ static NSOperationQueue *sharedQueue = nil;
 				[delegateAuthenticationLock unlock];
 				[self startRequest];
 			} else {
+				#if DEBUG_HTTP_AUTHENTICATION
+				NSLog(@"[AUTH] Request %@ failed to apply credentials",self);
+				#endif
 				[delegateAuthenticationLock unlock];
 				[self failWithError:[NSError errorWithDomain:NetworkRequestErrorDomain code:ASIInternalErrorWhileApplyingCredentialsType userInfo:[NSDictionary dictionaryWithObjectsAndKeys:@"Failed to apply credentials to request",NSLocalizedDescriptionKey,nil]]];
 			}
 			return;
 		}
 		if ([self willAskDelegateForCredentials]) {
-			[delegateAuthenticationLock unlock];
-			return;
-		}
-		
-		if ([self showAuthenticationDialog]) {
-			[delegateAuthenticationLock unlock];
-			return;
-		}
-		[delegateAuthenticationLock unlock];
-		
-		[self failWithError:ASIAuthenticationError];
 
+			#if DEBUG_HTTP_AUTHENTICATION
+			NSLog(@"[AUTH] Request %@ will ask its delegate for credentials to use",self);
+			#endif
+
+			[delegateAuthenticationLock unlock];
+			return;
+		}
+		if ([self showAuthenticationDialog]) {
+
+			#if DEBUG_HTTP_AUTHENTICATION
+			NSLog(@"[AUTH] Request %@ will ask ASIAuthenticationDialog for credentials",self);
+			#endif
+
+			[delegateAuthenticationLock unlock];
+			return;
+		}
+
+		#if DEBUG_HTTP_AUTHENTICATION
+		NSLog(@"[AUTH] Request %@ has no credentials to present and must give up",self);
+		#endif
+		[delegateAuthenticationLock unlock];
+		[self failWithError:ASIAuthenticationError];
 		return;
 	}
 	
@@ -2992,6 +3151,8 @@ static NSOperationQueue *sharedQueue = nil;
 - (void)addBasicAuthenticationHeaderWithUsername:(NSString *)theUsername andPassword:(NSString *)thePassword
 {
 	[self addRequestHeader:@"Authorization" value:[NSString stringWithFormat:@"Basic %@",[ASIHTTPRequest base64forData:[[NSString stringWithFormat:@"%@:%@",theUsername,thePassword] dataUsingEncoding:NSUTF8StringEncoding]]]];	
+	[self setAuthenticationScheme:(NSString *)kCFHTTPAuthenticationSchemeBasic];
+
 }
 
 
@@ -3034,22 +3195,7 @@ static NSOperationQueue *sharedQueue = nil;
 	[[self cancelledLock] unlock];
 	
 	if ([self downloadComplete] && [self needsRedirect]) {
-
-		// We must lock again to ensure delegate / queue aren't changed while we check them
-		[[self cancelledLock] lock];
-		// Here we perform an initial check to see if either the delegate or the queue wants to be asked about the redirect, because if not we should redirect straight away
-		// We will check again on the main thread later
-		BOOL needToAskDelegateAboutRedirect = (([self delegate] && [[self delegate] respondsToSelector:[self willRedirectSelector]]) || ([self queue] && [[self queue] respondsToSelector:@selector(request:willRedirectToURL:)]));
-		[[self cancelledLock] unlock];
-
-		// Either the delegate or the queue's delegate is interested in being told when we are about to redirect
-		if (needToAskDelegateAboutRedirect) {
-			NSURL *newURL = [[[self redirectURL] copy] autorelease];
-			[self setRedirectURL:nil];
-			[self performSelectorOnMainThread:@selector(requestWillRedirectToURL:) withObject:newURL waitUntilDone:[NSThread isMainThread]];
-
-		// If neither the delegate nor the queue's delegate implement request:willRedirectToURL:, we will redirect automatically
-		} else {
+		if (![self willAskDelegateToConfirmRedirect]) {
 			[self performRedirect];
 		}
 	} else if ([self downloadComplete] && [self authenticationNeeded]) {
@@ -3058,6 +3204,27 @@ static NSOperationQueue *sharedQueue = nil;
 
 	CFRelease(self);
 	[pool release];
+}
+
+- (BOOL)willAskDelegateToConfirmRedirect
+{
+	// We must lock to ensure delegate / queue aren't changed while we check them
+	[[self cancelledLock] lock];
+
+	// Here we perform an initial check to see if either the delegate or the queue wants to be asked about the redirect, because if not we should redirect straight away
+	// We will check again on the main thread later
+	BOOL needToAskDelegateAboutRedirect = (([self delegate] && [[self delegate] respondsToSelector:[self willRedirectSelector]]) || ([self queue] && [[self queue] respondsToSelector:@selector(request:willRedirectToURL:)]));
+
+	[[self cancelledLock] unlock];
+
+	// Either the delegate or the queue's delegate is interested in being told when we are about to redirect
+	if (needToAskDelegateAboutRedirect) {
+		NSURL *newURL = [[[self redirectURL] copy] autorelease];
+		[self setRedirectURL:nil];
+		[self performSelectorOnMainThread:@selector(requestWillRedirectToURL:) withObject:newURL waitUntilDone:[NSThread isMainThread]];
+		return true;
+	}
+	return false;
 }
 
 - (void)handleBytesAvailable
@@ -3213,7 +3380,7 @@ static NSOperationQueue *sharedQueue = nil;
 {	
 
 #if DEBUG_REQUEST_STATUS
-	NSLog(@"Request %@ finished downloading data (%qu bytes)",self, [self totalBytesRead]);
+	NSLog(@"[STATUS] Request %@ finished downloading data (%qu bytes)",self, [self totalBytesRead]);
 #endif
 	[self setStatusTimer:nil];
 	[self setDownloadComplete:YES];
@@ -3311,7 +3478,7 @@ static NSOperationQueue *sharedQueue = nil;
 	}
 	#if DEBUG_PERSISTENT_CONNECTIONS
 	if ([self requestID]) {
-		NSLog(@"Request #%@ finished using connection #%@",[self requestID], [[self connectionInfo] objectForKey:@"id"]);
+		NSLog(@"[CONNECTION] Request #%@ finished using connection #%@",[self requestID], [[self connectionInfo] objectForKey:@"id"]);
 	}
 	#endif
 	[[self connectionInfo] removeObjectForKey:@"request"];
@@ -3399,13 +3566,10 @@ static NSOperationQueue *sharedQueue = nil;
 
 	if (headers && dataPath) {
 
-		// only 200 responses are stored in the cache, so let the client know
-		// this was a successful response
-		[self setResponseStatusCode:200];
-
+		[self setResponseStatusCode:[[headers objectForKey:@"X-ASIHTTPRequest-Response-Status-Code"] intValue]];
 		[self setDidUseCachedResponse:YES];
-
 		[theRequest setResponseHeaders:headers];
+
 		if ([theRequest downloadDestinationPath]) {
 			[theRequest setDownloadDestinationPath:dataPath];
 		} else {
@@ -3417,10 +3581,19 @@ static NSOperationQueue *sharedQueue = nil;
 		[theRequest parseStringEncodingFromHeaders];
 
 		[theRequest setResponseCookies:[NSHTTPCookie cookiesWithResponseHeaderFields:headers forURL:[self url]]];
+
+		// See if we need to redirect
+		if ([self willRedirect]) {
+			if (![self willAskDelegateToConfirmRedirect]) {
+				[self performRedirect];
+			}
+			return;
+		}
 	}
+
 	[theRequest setComplete:YES];
 	[theRequest setDownloadComplete:YES];
-	
+
 	// If we're pulling data from the cache without contacting the server at all, we won't have set originalURL yet
 	if ([self redirectCount] == 0) {
 		[theRequest setOriginalURL:[theRequest url]];
@@ -3443,7 +3616,7 @@ static NSOperationQueue *sharedQueue = nil;
 		[self setWillRetryRequest:NO];
 
 		#if DEBUG_PERSISTENT_CONNECTIONS
-			NSLog(@"Request attempted to use connection #%@, but it has been closed - will retry with a new connection", [[self connectionInfo] objectForKey:@"id"]);
+			NSLog(@"[CONNECTION] Request attempted to use connection #%@, but it has been closed - will retry with a new connection", [[self connectionInfo] objectForKey:@"id"]);
 		#endif
 		[connectionsLock lock];
 		[[self connectionInfo] removeObjectForKey:@"request"];
@@ -3455,7 +3628,7 @@ static NSOperationQueue *sharedQueue = nil;
 		return YES;
 	}
 	#if DEBUG_PERSISTENT_CONNECTIONS
-		NSLog(@"Request attempted to use connection #%@, but it has been closed - we have already retried with a new connection, so we must give up", [[self connectionInfo] objectForKey:@"id"]);
+		NSLog(@"[CONNECTION] Request attempted to use connection #%@, but it has been closed - we have already retried with a new connection, so we must give up", [[self connectionInfo] objectForKey:@"id"]);
 	#endif	
 	return NO;
 }
@@ -3843,7 +4016,7 @@ static NSOperationQueue *sharedQueue = nil;
 		NSDictionary *existingConnection = [persistentConnectionsPool objectAtIndex:i];
 		if (![existingConnection objectForKey:@"request"] && [[existingConnection objectForKey:@"expires"] timeIntervalSinceNow] <= 0) {
 #if DEBUG_PERSISTENT_CONNECTIONS
-			NSLog(@"Closing connection #%i because it has expired",[[existingConnection objectForKey:@"id"] intValue]);
+			NSLog(@"[CONNECTION] Closing connection #%i because it has expired",[[existingConnection objectForKey:@"id"] intValue]);
 #endif
 			NSInputStream *stream = [existingConnection objectForKey:@"stream"];
 			if (stream) {
@@ -4131,13 +4304,15 @@ static NSOperationQueue *sharedQueue = nil;
 	}
 }
 
-
 + (NSMutableArray *)sessionCookies
 {
+	[sessionCookiesLock lock];
 	if (!sessionCookies) {
-		[ASIHTTPRequest setSessionCookies:[[[NSMutableArray alloc] init] autorelease]];
+		[ASIHTTPRequest setSessionCookies:[NSMutableArray array]];
 	}
-	return sessionCookies;
+	NSMutableArray *cookies = [[sessionCookies retain] autorelease];
+	[sessionCookiesLock unlock];
+	return cookies;
 }
 
 + (void)setSessionCookies:(NSMutableArray *)newSessionCookies
@@ -4183,81 +4358,83 @@ static NSOperationQueue *sharedQueue = nil;
 
 + (NSString *)defaultUserAgentString
 {
-	// If we already have a default user agent set, return that
-	if (defaultUserAgent) {
-		return defaultUserAgent;
-	}
-	
-	// Otherwise, create a new user agent string (we'll save it for later reuse)
-	
-	NSBundle *bundle = [NSBundle bundleForClass:[self class]];
+	@synchronized (self) {
 
-	// Attempt to find a name for this application
-	NSString *appName = [bundle objectForInfoDictionaryKey:@"CFBundleDisplayName"];
-	if (!appName) {
-		appName = [bundle objectForInfoDictionaryKey:@"CFBundleName"];	
-	}
+		if (!defaultUserAgent) {
 
-	NSData *latin1Data = [appName dataUsingEncoding:NSUTF8StringEncoding];
-	appName = [[[NSString alloc] initWithData:latin1Data encoding:NSISOLatin1StringEncoding] autorelease];
+			NSBundle *bundle = [NSBundle bundleForClass:[self class]];
 
-	// If we couldn't find one, we'll give up (and ASIHTTPRequest will use the standard CFNetwork user agent)
-	if (!appName) {
-		return nil;
-	}
+			// Attempt to find a name for this application
+			NSString *appName = [bundle objectForInfoDictionaryKey:@"CFBundleDisplayName"];
+			if (!appName) {
+				appName = [bundle objectForInfoDictionaryKey:@"CFBundleName"];
+			}
 
-	NSString *appVersion = nil;
-	NSString *marketingVersionNumber = [bundle objectForInfoDictionaryKey:@"CFBundleShortVersionString"];
-    NSString *developmentVersionNumber = [bundle objectForInfoDictionaryKey:@"CFBundleVersion"];
-	if (marketingVersionNumber && developmentVersionNumber) {
-		if ([marketingVersionNumber isEqualToString:developmentVersionNumber]) {
-			appVersion = marketingVersionNumber;
-		} else {
-			appVersion = [NSString stringWithFormat:@"%@ rv:%@",marketingVersionNumber,developmentVersionNumber];
+			NSData *latin1Data = [appName dataUsingEncoding:NSUTF8StringEncoding];
+			appName = [[[NSString alloc] initWithData:latin1Data encoding:NSISOLatin1StringEncoding] autorelease];
+
+			// If we couldn't find one, we'll give up (and ASIHTTPRequest will use the standard CFNetwork user agent)
+			if (!appName) {
+				return nil;
+			}
+
+			NSString *appVersion = nil;
+			NSString *marketingVersionNumber = [bundle objectForInfoDictionaryKey:@"CFBundleShortVersionString"];
+			NSString *developmentVersionNumber = [bundle objectForInfoDictionaryKey:@"CFBundleVersion"];
+			if (marketingVersionNumber && developmentVersionNumber) {
+				if ([marketingVersionNumber isEqualToString:developmentVersionNumber]) {
+					appVersion = marketingVersionNumber;
+				} else {
+					appVersion = [NSString stringWithFormat:@"%@ rv:%@",marketingVersionNumber,developmentVersionNumber];
+				}
+			} else {
+				appVersion = (marketingVersionNumber ? marketingVersionNumber : developmentVersionNumber);
+			}
+
+			NSString *deviceName;
+			NSString *OSName;
+			NSString *OSVersion;
+			NSString *locale = [[NSLocale currentLocale] localeIdentifier];
+
+			#if TARGET_OS_IPHONE
+				UIDevice *device = [UIDevice currentDevice];
+				deviceName = [device model];
+				OSName = [device systemName];
+				OSVersion = [device systemVersion];
+
+			#else
+				deviceName = @"Macintosh";
+				OSName = @"Mac OS X";
+
+				// From http://www.cocoadev.com/index.pl?DeterminingOSVersion
+				// We won't bother to check for systems prior to 10.4, since ASIHTTPRequest only works on 10.5+
+				OSErr err;
+				SInt32 versionMajor, versionMinor, versionBugFix;
+				err = Gestalt(gestaltSystemVersionMajor, &versionMajor);
+				if (err != noErr) return nil;
+				err = Gestalt(gestaltSystemVersionMinor, &versionMinor);
+				if (err != noErr) return nil;
+				err = Gestalt(gestaltSystemVersionBugFix, &versionBugFix);
+				if (err != noErr) return nil;
+				OSVersion = [NSString stringWithFormat:@"%u.%u.%u", versionMajor, versionMinor, versionBugFix];
+			#endif
+
+			// Takes the form "My Application 1.0 (Macintosh; Mac OS X 10.5.7; en_GB)"
+			[self setDefaultUserAgentString:[NSString stringWithFormat:@"%@ %@ (%@; %@ %@; %@)", appName, appVersion, deviceName, OSName, OSVersion, locale]];	
 		}
-	} else {
-		appVersion = (marketingVersionNumber ? marketingVersionNumber : developmentVersionNumber);
+		return [[defaultUserAgent retain] autorelease];
 	}
-	
-	
-	NSString *deviceName;
-	NSString *OSName;
-	NSString *OSVersion;
-	
-	NSString *locale = [[NSLocale currentLocale] localeIdentifier];
-	
-#if TARGET_OS_IPHONE
-	UIDevice *device = [UIDevice currentDevice];
-	deviceName = [device model];
-	OSName = [device systemName];
-	OSVersion = [device systemVersion];
-	
-#else
-	deviceName = @"Macintosh";
-	OSName = @"Mac OS X";
-	
-	// From http://www.cocoadev.com/index.pl?DeterminingOSVersion
-	// We won't bother to check for systems prior to 10.4, since ASIHTTPRequest only works on 10.5+
-    OSErr err;
-    SInt32 versionMajor, versionMinor, versionBugFix;
-	err = Gestalt(gestaltSystemVersionMajor, &versionMajor);
-	if (err != noErr) return nil;
-	err = Gestalt(gestaltSystemVersionMinor, &versionMinor);
-	if (err != noErr) return nil;
-	err = Gestalt(gestaltSystemVersionBugFix, &versionBugFix);
-	if (err != noErr) return nil;
-	OSVersion = [NSString stringWithFormat:@"%u.%u.%u", versionMajor, versionMinor, versionBugFix];
-	
-#endif
-	// Takes the form "My Application 1.0 (Macintosh; Mac OS X 10.5.7; en_GB)"
-	[self setDefaultUserAgentString:[NSString stringWithFormat:@"%@ %@ (%@; %@ %@; %@)", appName, appVersion, deviceName, OSName, OSVersion, locale]];	
-	return defaultUserAgent;
 }
 
 + (void)setDefaultUserAgentString:(NSString *)agent
 {
-	[defaultUserAgent release];
-	defaultUserAgent = [agent copy];
+	@synchronized (self) {
+		if (defaultUserAgent == agent) {
+			return;
+		}
+		[defaultUserAgent release];
+		defaultUserAgent = [agent copy];
+	}
 }
 
 
@@ -4294,14 +4471,14 @@ static NSOperationQueue *sharedQueue = nil;
 				if ([self readStreamIsScheduled]) {
 					[self unscheduleReadStream];
 					#if DEBUG_THROTTLING
-					NSLog(@"Sleeping request %@ until after %@",self,throttleWakeUpTime);
+					NSLog(@"[THROTTLING] Sleeping request %@ until after %@",self,throttleWakeUpTime);
 					#endif
 				}
 			} else {
 				if (![self readStreamIsScheduled]) {
 					[self scheduleReadStream];
 					#if DEBUG_THROTTLING
-					NSLog(@"Waking up request %@",self);
+					NSLog(@"[THROTTLING] Waking up request %@",self);
 					#endif
 				}
 			}
@@ -4319,12 +4496,12 @@ static NSOperationQueue *sharedQueue = nil;
 #if TARGET_OS_IPHONE
 	[bandwidthThrottlingLock lock];
 
-	BOOL throttle = isBandwidthThrottled || (!shouldThrottleBandwithForWWANOnly && (maxBandwidthPerSecond));
+	BOOL throttle = isBandwidthThrottled || (!shouldThrottleBandwithForWWANOnly && (maxBandwidthPerSecond > 0));
 	[bandwidthThrottlingLock unlock];
 	return throttle;
 #else
 	[bandwidthThrottlingLock lock];
-	BOOL throttle = (maxBandwidthPerSecond);
+	BOOL throttle = (maxBandwidthPerSecond > 0);
 	[bandwidthThrottlingLock unlock];
 	return throttle;
 #endif
@@ -4364,7 +4541,7 @@ static NSOperationQueue *sharedQueue = nil;
 		}
 	}
 	#if DEBUG_THROTTLING
-	NSLog(@"===Used: %u bytes of bandwidth in last measurement period===",bandwidthUsedInLastSecond);
+	NSLog(@"[THROTTLING] ===Used: %u bytes of bandwidth in last measurement period===",bandwidthUsedInLastSecond);
 	#endif
 	[bandwidthUsageTracker addObject:[NSNumber numberWithUnsignedLong:bandwidthUsedInLastSecond]];
 	[bandwidthMeasurementDate release];
@@ -4505,13 +4682,18 @@ static NSOperationQueue *sharedQueue = nil;
 
 + (void)setDefaultCache:(id <ASICacheDelegate>)cache
 {
-	[defaultCache release];
-	defaultCache = [cache retain];
+	@synchronized (self) {
+		[cache retain];
+		[defaultCache release];
+		defaultCache = cache;
+	}
 }
 
 + (id <ASICacheDelegate>)defaultCache
 {
-	return defaultCache;
+    @synchronized(self) {
+        return [[defaultCache retain] autorelease];
+    }
 }
 
 
@@ -4574,9 +4756,13 @@ static NSOperationQueue *sharedQueue = nil;
 // If you have multiple requests sharing the thread or you want to re-use the thread, you'll need to restart the runloop
 + (NSThread *)threadForRequest:(ASIHTTPRequest *)request
 {
-	if (!networkThread) {
-		networkThread = [[NSThread alloc] initWithTarget:self selector:@selector(runRequests) object:nil];
-		[networkThread start];
+	if (networkThread == nil) {
+		@synchronized(self) {
+			if (networkThread == nil) {
+				networkThread = [[NSThread alloc] initWithTarget:self selector:@selector(runRequests) object:nil];
+				[networkThread start];
+			}
+		}
 	}
 	return networkThread;
 }
