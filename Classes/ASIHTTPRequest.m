@@ -1526,7 +1526,8 @@ static NSOperationQueue *sharedQueue = nil;
 			[self setLastBytesSent:totalBytesSent];	
 			
 			// Find out how much data we've uploaded so far
-			[self setTotalBytesSent:[NSMakeCollectable([(NSNumber *)CFReadStreamCopyProperty((CFReadStreamRef)[self readStream], kCFStreamPropertyHTTPRequestBytesWrittenCount) autorelease]) unsignedLongLongValue]];
+            NSNumber *sent = NSMakeCollectable((NSNumber *)CFReadStreamCopyProperty((CFReadStreamRef)[self readStream], kCFStreamPropertyHTTPRequestBytesWrittenCount));
+			[self setTotalBytesSent:[[sent autorelease] unsignedLongLongValue]];
 			if (totalBytesSent > lastBytesSent) {
 				
 				// We've uploaded more data,  reset the timeout
@@ -2245,7 +2246,8 @@ static NSOperationQueue *sharedQueue = nil;
 		
 		NSString *connectionHeader = [[[self responseHeaders] objectForKey:@"Connection"] lowercaseString];
 
-		NSString *httpVersion = NSMakeCollectable([(NSString *)CFHTTPMessageCopyVersion(message) autorelease]);
+		NSString *httpVersion = NSMakeCollectable((NSString *)CFHTTPMessageCopyVersion(message));
+        [httpVersion autorelease];
 		
 		// Don't re-use the connection if the server is HTTP 1.0 and didn't send Connection: Keep-Alive
 		if (![httpVersion isEqualToString:(NSString *)kCFHTTPVersion1_0] || [connectionHeader isEqualToString:@"keep-alive"]) {
@@ -3392,7 +3394,9 @@ static NSOperationQueue *sharedQueue = nil;
 	[progressLock lock];	
 	// Find out how much data we've uploaded so far
 	[self setLastBytesSent:totalBytesSent];	
-	[self setTotalBytesSent:[NSMakeCollectable([(NSNumber *)CFReadStreamCopyProperty((CFReadStreamRef)[self readStream], kCFStreamPropertyHTTPRequestBytesWrittenCount) autorelease]) unsignedLongLongValue]];
+    NSNumber *sent = NSMakeCollectable((NSNumber *)CFReadStreamCopyProperty((CFReadStreamRef)[self readStream], kCFStreamPropertyHTTPRequestBytesWrittenCount));
+    [sent autorelease];
+	[self setTotalBytesSent:[sent unsignedLongLongValue]];
 	[self setComplete:YES];
 	if (![self contentLength]) {
 		[self setContentLength:[self totalBytesRead]];
@@ -3636,7 +3640,9 @@ static NSOperationQueue *sharedQueue = nil;
 - (void)handleStreamError
 
 {
-	NSError *underlyingError = NSMakeCollectable([(NSError *)CFReadStreamCopyError((CFReadStreamRef)[self readStream]) autorelease]);
+    NSError *errorFromStream = NSMakeCollectable((NSError *)CFReadStreamCopyError((CFReadStreamRef)[self readStream]));
+    [errorFromStream autorelease];
+	NSError *underlyingError = errorFromStream;
 
 	if (![self error]) { // We may already have handled this error
 		
@@ -3814,13 +3820,12 @@ static NSOperationQueue *sharedQueue = nil;
 		} else {
 
 #if TARGET_OS_IPHONE
-			NSDictionary *proxySettings = NSMakeCollectable([(NSDictionary *)CFNetworkCopySystemProxySettings() autorelease]);
+			NSDictionary *proxySettings = [NSMakeCollectable((NSDictionary *)CFNetworkCopySystemProxySettings()) autorelease];
 #else
-			NSDictionary *proxySettings = NSMakeCollectable([(NSDictionary *)SCDynamicStoreCopyProxies(NULL) autorelease]);
+			NSDictionary *proxySettings = [NSMakeCollectable((NSDictionary *)SCDynamicStoreCopyProxies(NULL)) autorelease];
 #endif
 
-			proxies = NSMakeCollectable([(NSArray *)CFNetworkCopyProxiesForURL((CFURLRef)[self url], (CFDictionaryRef)proxySettings) autorelease]);
-
+			proxies = [NSMakeCollectable((NSArray *)CFNetworkCopyProxiesForURL((CFURLRef)[self url], (CFDictionaryRef)proxySettings)) autorelease];
 			// Now check to see if the proxy settings contained a PAC url, we need to run the script to get the real list of proxies if so
 			NSDictionary *settings = [proxies objectAtIndex:0];
 			if ([settings objectForKey:(NSString *)kCFProxyAutoConfigurationURLKey]) {
@@ -3971,7 +3976,8 @@ static NSOperationQueue *sharedQueue = nil;
 
 		// Obtain the list of proxies by running the autoconfiguration script
 		CFErrorRef err = NULL;
-		NSArray *proxies = NSMakeCollectable([(NSArray *)CFNetworkCopyProxiesForAutoConfigurationScript((CFStringRef)script,(CFURLRef)[self url], &err) autorelease]);
+		NSArray *proxies = NSMakeCollectable((NSArray *)CFNetworkCopyProxiesForAutoConfigurationScript((CFStringRef)script,(CFURLRef)[self url], &err));
+        [proxies autorelease];
 		if (!err && [proxies count] > 0) {
 			NSDictionary *settings = [proxies objectAtIndex:0];
 			[self setProxyHost:[settings objectForKey:(NSString *)kCFProxyHostNameKey]];
@@ -4452,7 +4458,7 @@ static NSOperationQueue *sharedQueue = nil;
 	if (!MIMEType) {
 		return @"application/octet-stream";
 	}
-    return NSMakeCollectable([(NSString *)MIMEType autorelease]);
+    return [NSMakeCollectable((NSString *)MIMEType) autorelease];
 }
 
 #pragma mark bandwidth measurement / throttling
